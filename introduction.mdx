@@ -1,0 +1,65 @@
+---
+title: "Backstage Assistants: AI for Your Developer Portal"
+sidebarTitle: "Introduction"
+description: "Backstage Assistants embeds AI chat in your developer portal, grounding every answer in your catalog and TechDocs and running every action as the signed-in user."
+---
+
+Backstage Assistants is a set of plugins that bring AI chat directly into your Backstage developer portal. Every answer is grounded in your catalog and TechDocs — not the model's memory — and every Backstage action an assistant takes runs with the permissions of the signed-in user. People can ask questions on a full chat page at `/assistants`, in a collapsible side panel that opens beside any page in your app, or from a composer on the home page. Assistants can read the page the user is currently looking at, call external MCP servers under a configured or per-user credential, run scaffolder templates end-to-end inside the conversation, and render generative UI including inline forms with your own scaffolder field extensions and Mermaid architecture diagrams. Platform admins create and manage assistants entirely in-app through a built-in editor — no `app-config.yaml` edits required for per-assistant settings.
+
+## Packages
+
+All four packages are published to npm under the `@drewswiredin` scope. The `-common` package is pulled in transitively and does not need to be installed directly.
+
+| Package | npm name | Role |
+| --- | --- | --- |
+| Frontend plugin | `@drewswiredin/backstage-plugin-assistants` | Chat page, side panel, homepage composer, and in-app editor (new frontend system) |
+| Backend plugin | `@drewswiredin/backstage-plugin-assistants-backend` | Streams replies, runs Backstage actions as tools, manages assistant definitions in the database |
+| Shared types | `@drewswiredin/backstage-plugin-assistants-common` | Browser-safe shared types, permission definitions (`assistant.use`, `assistant.manage`), and platform instructions |
+| Semantic search module | `@drewswiredin/backstage-plugin-assistants-backend-module-semantic-search` | Knowledge index: semantic and fuzzy search over everything Backstage search indexes (requires Postgres + pgvector) |
+
+## Key capabilities
+
+<CardGroup cols={2}>
+  <Card title="Grounded Answers" icon="database">
+    Answers come from your catalog and TechDocs, not the model's training data. Add the semantic search module and assistants find pages by meaning and tolerate misspellings — covering everything Backstage search indexes, including Confluence or a wiki, without reading any source twice.
+  </Card>
+  <Card title="Actions as the User" icon="user-shield">
+    Assistants call Backstage actions — look up entities, search docs, run a scaffolder template — with the calling user's own credentials and permissions. Nothing runs behind the user's back, and write-capable actions can be gated behind an explicit Allow in the conversation.
+  </Card>
+  <Card title="MCP Servers" icon="plug">
+    Connect external MCP servers (GitHub, Atlassian, Azure DevOps, and more) under a static credential or per user, with the token from their Backstage sign-in or through the server's own OAuth flow. Each connected user's calls carry only what that user may do.
+  </Card>
+  <Card title="Generative UI" icon="wand-magic-sparkles">
+    Replies are more than text. Assistants render inline forms built from your scaffolder field extensions, draw Mermaid diagrams with fullscreen pan and zoom, and hand back generated files (CSV, JSON, code, SVG) as download chips. Approval cards pause a turn for an explicit Allow before any gated action runs.
+  </Card>
+  <Card title="Panel & Composer" icon="sidebar">
+    A floating button opens a side panel beside any page — the page makes room for it. `Ctrl+/` (`⌘/` on macOS) toggles it from anywhere. An optional homepage composer lets users ask from the home page in one of four looks; the reply opens in the panel.
+  </Card>
+  <Card title="In-App Editor" icon="pencil">
+    Admins create, edit, and delete assistants in-app; changes are live on save. Configure each assistant's prompt, starter suggestions, models, tools, and access policy — none of this lives in `app-config.yaml`. Exactly one assistant is the default: listed first and opened by the panel for every signed-in user.
+  </Card>
+</CardGroup>
+
+## Requirements
+
+- **Backstage 1.56 or later**, on the new frontend system and the new backend system (`@backstage/backend-defaults`).
+- **Node 22.12 or later.**
+- **React 18** and `react-router-dom` ^6.30.2 in the app.
+- **A plugin database:** SQLite, Postgres, or MySQL.
+- **A model provider and API key:** OpenAI, Anthropic, Azure OpenAI / AI Foundry, or any OpenAI-compatible endpoint such as [OpenRouter](https://openrouter.ai); or a provider type a backend module adds.
+- **Recommended:** `@backstage/plugin-signals` in the app and `@backstage/plugin-signals-backend` in the backend. The frontend uses Signals for live working and unread status when available and falls back to polling every 10 seconds without it.
+
+<Note>
+  Backstage Assistants **requires the new frontend system** — `createApp` imported from `@backstage/frontend-defaults`. It does not mount in a legacy `packages/app` built on `@backstage/app-defaults`. If your Backstage app was set up before the new frontend system was the default, follow the [Backstage migration guide](https://backstage.io/docs/frontend-system/building-apps/migrating) before installing these plugins.
+</Note>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Install the packages, wire up the plugins, and have a working assistant in your portal in under 15 minutes.
+  </Card>
+  <Card title="First Run" icon="play" href="/first-run">
+    Learn what happens on first start, how the seeded default assistant works, and how to use the in-app editor.
+  </Card>
+</CardGroup>

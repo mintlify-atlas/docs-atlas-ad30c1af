@@ -1,0 +1,189 @@
+---
+title: "Connect MCP Servers to Backstage Assistants"
+sidebarTitle: "MCP Servers"
+description: "Give assistants tools from external MCP servers — GitHub, Atlassian, Azure DevOps, or any MCP-compatible service — via HTTP, SSE, or stdio transports."
+---
+
+MCP servers are declared under `assistants.mcp.servers` in `app-config.yaml`. Each server exposes a set of tools that admins assign to individual assistants in the editor. A selected tool becomes an entry in the assistant's `allowedTools` list, namespaced as `<serverId>__<tool>`. There is no config-level per-assistant server allowlist — tool assignment is always done in the editor.
+
+<Note>
+  MCP tools are assigned per-assistant in the editor; selecting a tool from a server adds it to that assistant's allowlist as `<serverId>__<tool>`. No config key controls which servers are available to which assistants.
+</Note>
+
+## Transport types
+
+Three transports are supported: `http` (Streamable HTTP, the default), `sse`, and `stdio`.
+
+```yaml
+assistants:
+  mcp:
+    servers:
+      # Streamable HTTP with a static auth header
+      github:
+        transport: http
+        url: https://api.githubcopilot.com/mcp/
+        headers:
+          Authorization: Bearer ${GITHUB_MCP_TOKEN}
+        requireApproval: [create_pull_request]
+
+      # Remote over SSE
+      jira:
+        transport: sse
+        url: https://mcp.example.internal/sse
+
+      # Local process over stdio
+      filesystem:
+        transport: stdio
+        command: npx
+        args: ['-y', '@modelcontextprotocol/server-filesystem', '/data']
+        env:
+          SOME_TOKEN: ${SOME_TOKEN}
+```
+
+`http` and `sse` are remote transports that take a `url` and optional `headers`. `stdio` spawns a local process using `command`, with optional `args`, `env`, and `cwd`.
+
+Connections are opened in the background on a maintenance task that runs every 2 minutes. The plugin never blocks a request waiting for a slow or unreachable server; its tools fill in on the next cycle. A server that is not connected when a turn calls one of its tools yields a "not connected" tool result for that turn.
+
+## Connect timeouts
+
+The global `assistants.mcp.connectTimeoutMs` (default `8000` ms) bounds how long connecting to a server and listing its tools may take. Set a per-server override with `servers.<id>.connectTimeoutMs`.
+
+```yaml
+assistants:
+  mcp:
+    connectTimeoutMs: 15000 # global default
+    servers:
+      atlassian:
+        transport: stdio
+        command: mcp-atlassian
+        connectTimeoutMs: 20000 # this server starts slowly
+```
+
+Stdio servers launched via `uvx` or `npx` often need 15,000–20,000 ms because the runtime itself must be installed before the server process starts. A server that never connects inside its timeout is retried on every maintenance cycle.
+
+## Per-user MCP servers
+
+A server with `userCredentials` has no shared credential. Each turn calls the server with the signed-in user's own token, which the browser retrieves from Backstage's auth APIs and forwards in a request header. The remote system limits every call to what that user may do and attributes writes to them. The token is never stored, logged, or included in a message.
+
+```yaml
+assistants:
+  mcp:
+    servers:
+      github-user:
+        transport: http
+        url: https://api.githubcopilot.com/mcp/
+        userCredentials:
+          provider: github  # matches a Backstage auth provider id
+          header: Authorization
+          scheme: Bearer
+```
+
+`provider` must match a Backstage auth provider configured in `auth.providers`. The `header` and `scheme` fields control how the token is forwarded to the server; both default to `Authorization` and `Bearer`.
+
+What users see: a **Connect GitHub** chip appears next to the model picker until the user has signed in through that provider. Until they connect, the server's tools are not offered to the model, and the model is told to ask the user to connect.
+
+<Warning>
+  Per-user server tools have no **Always allow** by default — every gated call is approved on its own, call by call. Set `allowStandingApproval: true` on the server to offer the Always allow option. List every write-capable tool in `requireApproval` so that no write runs without an explicit Allow from the user.
+</Warning>
+
+## OAuth MCP servers
+
+Many hosted MCP servers implement the MCP authorization spec and run their own OAuth rather than accepting a Backstage sign-in token. Use `provider: oauth` to have the backend run the full OAuth sign-in on the user's behalf. The backend keeps the user's tokens AES-256-GCM encrypted in the plugin database and refreshes them during the user's turns; tokens never reach the browser.
+
+This requires `mcp.oauth.encryptionKey` — a 32-byte value encoded as base64. Generate one with:
+
+```bash
+openssl rand -base64 32
+```
+
+```yaml
+assistants:
+  mcp:
+    oauth:
+      encryptionKey: ${ASSISTANTS_MCP_OAUTH_KEY}
+    servers:
+      atlassian:
+        transport: http
+        url: https://mcp.atlassian.com/v1/mcp/authv2
+        userCredentials:
+          provider: oauth
+          title: Atlassian
+          scopes:
+            - read:me
+            - offline_access
+            - read:jira-work
+            - search:confluence
+            - read:page:confluence
+        requireApproval: [createJiraIssue, editJiraIssue, addCommentToJiraIssue]
+```
+
+What users see: a **Connect Atlassian** chip next to the model picker. Clicking it opens the server's sign-in in a popup. Once connected, the chip becomes **✓ Atlassian** with an × to disconnect. A lapsed sign-in that cannot be refreshed shows **Reconnect Atlassian**.
+
+To rotate the encryption key, move the old key to `previousEncryptionKeys` and set a new `encryptionKey`; stored tokens migrate to the new key as they are used.
+
+## Elicitation
+
+Some MCP servers pause mid-call to ask the user a question (the MCP `elicitation/create` protocol). When enabled, the question appears as a form on the tool call in the conversation. The user submits or declines, and only that server receives the answer — the model never sees the question or the answer, only the tool's final result.
+
+```yaml
+assistants:
+  mcp:
+    elicitationTimeoutMs: 300000  # how long a question waits (default 5 minutes)
+    servers:
+      ado:
+        # On by default for per-user servers; off for shared servers
+        elicitation: true
+```
+
+Elicitation is on by default for per-user servers because each connection belongs to one user. It is off by default for shared servers, since a question arriving outside a specific call cannot be tied to one user when multiple users are running calls simultaneously.
+
+## Approval
+
+List tool names in `mcp.servers.<id>.requireApproval` to pause the turn and show an **Allow / Deny** card before that tool runs. The approval gate is a config floor — it cannot be weakened by assistant definitions at runtime.
+
+```yaml
+assistants:
+  mcp:
+    servers:
+      github:
+        transport: http
+        url: https://api.githubcopilot.com/mcp/
+        headers:
+          Authorization: Bearer ${GITHUB_MCP_TOKEN}
+        requireApproval: [create_pull_request]
+```
+
+Tools that appear in `requireApproval` are namespaced as `<serverId>__<tool>` in the global `assistants.requireApproval` list if you want to gate them there instead.
+
+## Argument rules
+
+`argumentRules` enforces a `pattern` (a regular expression the argument must match) or `equals` check on a specific tool argument, before the approval prompt and again before the call. A call that breaks a rule is denied immediately with the reason; the user never approves a call that would then be refused.
+
+```yaml
+argumentRules:
+  create_pull_request:
+    draft: { equals: true }
+```
+
+Argument rules work on any server — shared or per-user — and are evaluated independently of the approval gate.
+
+## Write preview
+
+`approvalPreview` enriches the approval card for a gated write, showing the target (repository, branch, path), the commit message, and a diff against the current content instead of raw JSON.
+
+```yaml
+approvalPreview:
+  create_or_update_file:
+    type: file
+    fields:
+      repo: '{owner}/{repo}'
+      branch: branch
+      path: path
+      content: content
+      message: message
+    base:
+      tool: get_file_contents
+      args: { owner: owner, repo: repo, path: path, ref: branch }
+```
+
+`type: file` shows a single-file diff. `type: files` shows one collapsible diff per file for tools that take a `files: [{ path, content }]` argument. With `base`, the card fetches the current content via `POST /api/assistants/preview`, running only the configured read tool as the same user.

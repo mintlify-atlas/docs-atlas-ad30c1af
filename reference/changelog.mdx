@@ -1,0 +1,216 @@
+---
+title: "Backstage Assistants Changelog"
+sidebarTitle: "Changelog"
+description: "Version history and notable changes for the Backstage Assistants plugin packages."
+---
+
+The changelog tracks notable changes across all four packages. Each package follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format. The entries below cover recent releases; for the complete version history see the GitHub releases page.
+
+<Note>
+  The full version history for every package is on the [GitHub releases page](https://github.com/drewswiredin/backstage-assistants/releases).
+</Note>
+
+## Current package versions
+
+| Package | Version |
+| --- | --- |
+| `@drewswiredin/backstage-plugin-assistants` | `0.24.0` |
+| `@drewswiredin/backstage-plugin-assistants-backend` | `0.23.0` |
+| `@drewswiredin/backstage-plugin-assistants-backend-module-semantic-search` | `0.3.2` |
+| `@drewswiredin/backstage-plugin-assistants-common` | `0.19.0` |
+
+---
+
+## `@drewswiredin/backstage-plugin-assistants` (frontend)
+
+### 0.24.0 — 2026-10-26
+
+**Added**
+
+- The collapsed panel's strip now has a left edge in the assistant's color. It glows onto the page in a slow pulse while the assistant is working and holds the glow while a reply is unread, matching the dot on the nav icon.
+- Turns on a provider that runs its own tool loop: an approval asked on a held call is answered through `/held-calls/:id`, and a client tool's call runs in the browser while the turn is live. `render_form` waits for the form; a tool that would ask first (a write, or Connect) is declined with a message the model sees.
+
+**Fixed**
+
+- Backstage dialogs and drawers (such as a Kubernetes pod or the entity inspector) now open beside the panel and the collapsed strip instead of covering them.
+- `read_current_page` now reads an open MUI drawer correctly.
+- The model and effort pickers in every composer now have correct compact pill styling.
+- With replicated backends, a conversation no longer stays without its working or unread dot when the turn runs on a different replica from the one serving signals to this browser.
+
+### 0.23.0 — 2026-10-26
+
+**Added**
+
+- A pin in the panel header keeps the panel open while the user works on the page; unpinned, clicking the page or pressing `Esc` collapses it. The pin is remembered per browser.
+- Double-clicking the panel's left resize edge resets the panel to its default width.
+
+**Fixed**
+
+- Backstage dialogs and drawers open beside the panel instead of covering it or the collapsed strip.
+- Clicking or typing in the panel no longer closes an open Backstage dialog or drawer.
+- A conversation started from the homepage composer now opens in the panel with its reply streaming.
+- In narrow composers (such as the panel near its minimum width), the model and effort pickers display as icons with values in a tooltip.
+
+### 0.22.0 — 2026-10-23
+
+**Added**
+
+- Connecting to an MCP server that runs its own OAuth (`provider: oauth`): the **Connect** chip opens the server's sign-in in a popup; once connected, the chip reads "✓ \<name\>" with an × to disconnect. An expired sign-in shows **Reconnect \<name\>**.
+- MCP elicitation: a server's question mid-call appears on the tool call as a form (text, number, yes/no, single and multiple choice) with Submit and Decline buttons. A warning appears when a field looks like a secret.
+
+### 0.21.0 — 2026-10-22
+
+**Added**
+
+- **Connect GitHub** chips beside the model picker for each per-user MCP server the user has not signed in to.
+- The approval card shows a configured write as its repository, branch, path, commit message, and a diff against the current content. Multi-file commits show one collapsible diff per file.
+
+### 0.20.0 — 2026-10-22
+
+**Added**
+
+- `describe_portal`, a built-in client tool: returns what this Backstage instance offers (its plugins, pages with their paths, entity page tabs, and contributed client tools), read from the app tree.
+
+### 0.19.0 — 2026-10-22
+
+**Added**
+
+- The homepage composer: `assistantsHomeModule` from the `./home` entry point adds an `AssistantComposer` widget to a `@backstage/plugin-home` home page. Four `variant` options: `bar`, `padded` (default), `full`, and `titled`.
+- `usePanelControl`: opens the panel from a page component, on a conversation or with a first message.
+- The panel's history button lists the assistant's earlier conversations.
+
+### 0.18.0 — 2026-10-22
+
+**Added**
+
+- `read_current_page`, a built-in client tool: the rendered page as an outline (open dialogs, headings, text, buttons, links, tabs, form fields, tables, alerts). Disable app-wide with `assistant-client-tool:assistants/read-current-page: false`.
+- The panel sends the page it sits beside with every turn (path, title, catalog entity ref).
+
+### 0.17.0 — 2026-10-22
+
+**Added**
+
+- The panel: a floating button opens a side panel beside the page; the page makes room for it rather than being covered. Ships as `assistantsPanelModule`. Supports `Ctrl+/` toggle, resizable left edge, pin, and per-browser conversation memory.
+- `threadRouteRef`: `/assistants/threads/:threadId` opens one conversation directly.
+- `clientToolsApiRef`: the shared registry of contributed client tools.
+- The editor's **Make default** designates the default assistant.
+
+### 0.16.0 — 2026-10-20
+
+**Added**
+
+- `AssistantClientToolBlueprint`: any plugin or module registers a browser-side tool with `attributes`, optional `auth`, `render`, `isAvailable`, and `timeoutMs`. Tools that are not read-only or are destructive ask for approval on every call.
+- The assistant editor lists registered client tools under **Browser tools**.
+
+---
+
+## `@drewswiredin/backstage-plugin-assistants-backend`
+
+### 0.23.0 — 2026-10-26
+
+**Added**
+
+- `assistantsModelProvidersExtensionPoint`: a backend module can add provider types beyond the four built in (for example, a cloud SDK or a company AI gateway).
+- Providers that run their own tool loop (`runsOwnToolLoop: true`): a call that needs the user is held open and answered through the new `POST /held-calls/:id` route.
+
+### 0.22.0 — 2026-10-23
+
+**Added**
+
+- MCP servers that run their own OAuth: `userCredentials.provider: oauth` implements the MCP authorization spec through `@ai-sdk/mcp`. The backend stores tokens AES-256-GCM encrypted, refreshes them during turns, and never sends them to the browser.
+- MCP elicitation: an MCP server may pause mid-call to ask the user for input via `elicitation/create`. The question streams to the browser as a form and is answered at `POST /elicitations/:id`.
+
+### 0.21.0 — 2026-10-22
+
+**Added**
+
+- Per-user MCP servers (`mcp.servers.<id>.userCredentials`): each turn calls the server with the signed-in user's own token. Each user gets their own pooled connection.
+- `mcp.servers.<id>.argumentRules`: enforced checks on tool arguments before and after the approval prompt.
+- `mcp.servers.<id>.approvalPreview` and `POST /preview`: the approval card shows a gated write as a diff.
+- `assistants.tool.audit` log lines for every gated MCP call outcome and every rule rejection.
+
+### 0.19.0 — 2026-10-22
+
+**Added**
+
+- The default assistant: exactly one assistant is the one every signed-in user gets. `PUT /manage/assistants/:id/default` designates it. Lives in `assistants_meta`.
+
+### 0.18.0 — 2026-10-20
+
+**Added**
+
+- `POST /chat` accepts `tools`: client tool declarations from the browser. At most 30 per request (built-ins included); tools outside the assistant's `allowedTools` are dropped.
+- `GET /status` returns `requireApproval`, the global approval floor.
+
+### 0.17.6 — 2026-10-15
+
+**Fixed**
+
+- The working indicator and Stop hold correctly across backend replicas using a per-turn heartbeat (`turn_heartbeat_at`) and cancel request (`turn_cancel_requested`) on the `threads` table.
+- Reopening a conversation mid-reply joins the live stream on any replica via the new `stream_chunks` table.
+
+### 0.17.5 — 2026-10-14
+
+**Added**
+
+- Every turn now sends platform instructions before the assistant's prompt: rendering rules, formatting, safe Mermaid syntax, and guidance on `render_form`, `download_file`, and `read_current_page`.
+
+---
+
+## `@drewswiredin/backstage-plugin-assistants-backend-module-semantic-search`
+
+### 0.3.2 — 2026-10-26
+
+**Fixed**
+
+- README corrections: the refresh task id for a hyphenated type, metadata string list handling, and the upper bound on the model's `limit` parameter.
+
+### 0.3.0 — 2026-10-22
+
+**Added**
+
+- Ranking by source: `assistants.semanticSearch.types.<type>` sets `weight`, `default`, `maxResults`, `enabled`, and `description` per document type.
+- `search-knowledge` accepts a `types` parameter to search only named sources.
+- `knowledgeRankingExtensionPoint` (from `./alpha`): a backend module can replace the default ranker. The ranker sees only candidates the caller may read.
+
+### 0.2.0 — 2026-10-22
+
+**Changed**
+
+- The index is now a copy of everything Backstage search indexes rather than a direct crawl. A search decorator hands each finished collator run to the index, so Confluence, wikis, and any other collated source become searchable by meaning without being read twice.
+
+### 0.1.0 — 2026-10-12
+
+**Added**
+
+- Initial knowledge index: TechDocs sections and catalog entities embedded into the assistants plugin's Postgres database, with `search-knowledge` for semantic, fuzzy, and keyword retrieval fused by reciprocal rank.
+
+---
+
+## `@drewswiredin/backstage-plugin-assistants-common`
+
+### 0.19.0 — 2026-10-26
+
+**Added**
+
+- `HeldCallAnswer`, `HELD_APPROVAL_PREFIX`, and `heldToolCallId`: the contract for answering a call held inside a provider's own tool loop.
+
+### 0.17.0 — 2026-10-23
+
+**Added**
+
+- `McpOAuthConnection`, `McpOAuthStatusResponse`, `McpOAuthStartResponse`, and `MCP_OAUTH_MESSAGE_TYPE` for MCP servers running their own OAuth.
+- MCP elicitation types: `ElicitationPrompt`, `ElicitationResponseRequest`, `ElicitationField`, `parseElicitationSchema`, `validateElicitationContent`, and `isSensitiveElicitationField`.
+
+### 0.13.0 — 2026-10-20
+
+**Added**
+
+- The client tool contract: `ClientToolAttributes`, `ClientToolDeclaration`, `ClientToolError`, `ClientToolErrorCode`, `CLIENT_TOOL_NAME_PATTERN`, `BUILTIN_CLIENT_TOOLS`, `CLIENT_TOOL_LIMITS`, and `isClientToolName`.
+- `StatusResponse.requireApproval`: the global approval floor as tool names.
+
+### 0.12.0 — 2026-10-14
+
+**Added**
+
+- `PLATFORM_INSTRUCTIONS`: the fixed text the backend prepends to every turn's system prompt.

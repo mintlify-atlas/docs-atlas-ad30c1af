@@ -1,0 +1,92 @@
+---
+title: "Run Backstage Assistants in Production"
+sidebarTitle: "Production"
+description: "Multi-replica deployment, database backup, log reference, startup errors, and upgrade procedure for Backstage Assistants in production."
+---
+
+Backstage Assistants is designed for production multi-replica backends. Running turns and their streams are recorded in the plugin database, so all conversation state is available on every replica without any affinity requirements. This page covers replica behavior, the upgrade and backup procedure, the full log reference, and startup error messages.
+
+## Replicas
+
+The plugin runs on any number of backend replicas with no session affinity required. Running turns and their reply streams are stored in the database, so the working indicator, the Stop button, and reopening a conversation mid-reply all behave correctly regardless of which replica serves the request. A user who navigates away and returns mid-reply resumes the stream, replaying the reply so far — including reasoning blocks and tool calls — following it about half a second behind live. Stream rows are deleted 60 seconds after a turn completes.
+
+Assistant definitions are cached per replica: updated immediately on the replica that wrote the change, and refreshed within 60 seconds on all others. The MCP connection pool is per process, with its own maintenance task running independently on each replica.
+
+**Signals** reach only clients connected to the replica that emitted them, unless your Backstage events service is configured for cross-instance delivery. While a turn runs, the browser also polls its status every 5 seconds, so working indicators clear without cross-instance signal delivery.
+
+## Upgrading
+
+Migrations are forward-only and run automatically at startup. Upgrade the backend before or at the same time as the database. A backend that is older than the database's newest migration fails at startup with knex's `"migration directory is corrupt"` error.
+
+## Backup
+
+Back up the following tables together before upgrading:
+
+| Table | Contains |
+|---|---|
+| `assistants` | Assistant definitions (prompt, access policy, tools) |
+| `assistants_meta` | Seed-once marker and default designation |
+| `threads` | Conversation records |
+| `messages` | All message content |
+| `mcp_tool_cache` | Per-user MCP server tool inventories |
+| `mcp_oauth_tokens` | Encrypted OAuth tokens for OAuth MCP servers |
+| `mcp_oauth_clients` | Registered OAuth clients (secrets encrypted) |
+
+The following tables hold only in-flight state and do not need to be backed up:
+
+| Table | Contains |
+|---|---|
+| `stream_chunks` | Running reply stream (deleted 60 s after turn completes) |
+| `mcp_oauth_state` | In-progress OAuth sign-ins (deleted after callback or 10 min) |
+| `mcp_elicitations` | Open MCP server questions |
+
+<Tip>
+  The default `requestBodyLimit` for all plugin routes is `10mb`, sized to accommodate file attachments in `/chat` requests. If your users attach large files and hit body size errors, raise it in `app-config.yaml` under `assistants.requestBodyLimit`.
+</Tip>
+
+## Log reference
+
+<Accordion title="AI Assistants backend plugin initialized">
+  Emitted at info on every healthy start. Includes `models` (total model count), `defaultModel` (the configured default model id), `builtinActions` (whether the built-in catalog/TechDocs tools are registered), and `assistants` (the number of definitions in the database).
+</Accordion>
+
+<Accordion title="chat turn started / chat turn finished / chat turn errored">
+  Emitted at info per turn on start and on clean finish or user-requested stop (`chat turn aborted (stop)`). A provider or processing failure emits `chat turn errored` at error with the provider's message and, for a provider error, the response body.
+</Accordion>
+
+<Accordion title="assistants.tool.audit">
+  Emitted at info for every approval decision on a gated tool, every argument-rule rejection, and every elicitation. Fields: `user`, `assistantId`, `threadId`, `server`, `tool`, `decision` (`approved`, `denied`, `executed`, `failed`, `rejected-by-rule`, or `elicitation`), and `target` (the call's identifying arguments such as owner, repo, branch, path, and issue/PR numbers). Never contains message content, tokens, or credentials.
+</Accordion>
+
+<Accordion title="Assistant action '<name>' is not available; skipping">
+  The assistant's `allowedTools` lists an action that the actions service does not expose for this request. Usually caused by `assistants` (or another plugin) missing from `backend.actions.pluginSources`, or by `builtinActions: false` when a built-in tool was assigned.
+</Accordion>
+
+<Accordion title="MCP server '<id>' tool listing failed">
+  The last-known tool list for that server stays in place. The server shows as unreachable in the editor. The maintenance task retries on the next cycle.
+</Accordion>
+
+<Accordion title="default assistant designated">
+  Emitted at info each time an admin designates a new default assistant, with the assistant's id and the acting admin's identity.
+</Accordion>
+
+## Startup errors
+
+Each of the following is an `InputError` raised while reading config. The backend exits with the message before accepting any requests.
+
+| Message | Cause |
+|---|---|
+| `Unsupported provider type '<type>' for provider '<id>'` | `type` is not one of the four built-in types and no backend module registered it. The message lists the available types. |
+| `assistants config must declare at least one model` | No provider has a non-empty `models` list. |
+| `assistants.defaultModel '<id>' is not one of the configured models` | `defaultModel` is not a `<providerId>:<model>` string that matches any entry in the model pool. |
+| `assistants.mcp.servers.<id>.transport must be one of 'http', 'sse', 'stdio'` | An unrecognized transport value. |
+| `assistants.mcp.servers.<id>: stdio transport requires 'command'` | A `stdio` server with no `command` field. |
+| `assistants.mcp.servers.<id>: '<transport>' transport requires 'url'` | An `http` or `sse` server with no `url` field. |
+| `assistants.mcp.connectTimeoutMs must be a positive number of milliseconds` | The global or per-server `connectTimeoutMs` is zero, negative, or not a number. |
+| `assistants model '<id>': maxOutputTokens must be a positive number of tokens` | `maxOutputTokens` is zero or negative. |
+| `assistants.mcp.servers.<id>: headers.<name> is the per-user token; remove the static value` | A static header entry conflicts with the header `userCredentials` uses for the token. |
+| `assistants.mcp.oauth.encryptionKey is required: ...` | A server uses `provider: oauth` but `mcp.oauth.encryptionKey` is not set. |
+| `assistants.mcp.oauth.encryptionKey must be 32 bytes, base64` | The encryption key is the wrong length or not valid base64. |
+| `assistants.mcp.elicitationTimeoutMs must be a positive number of milliseconds` | `elicitationTimeoutMs` is zero, negative, or not a number. |
+| `assistants.mcp.servers.<id>.argumentRules.<tool>.<argument>.pattern is not a valid regular expression` | The `pattern` value cannot be compiled as a regex. |
+| `assistants.mcp.servers.<id>.approvalPreview.<tool>.type must be 'file' or 'files'` | An unrecognized `approvalPreview` type. |

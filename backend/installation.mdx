@@ -1,0 +1,117 @@
+---
+title: "Install the Assistants Backend Plugin"
+sidebarTitle: "Installation"
+description: "Add @drewswiredin/backstage-plugin-assistants-backend to your Backstage backend, configure a model provider, and enable the built-in catalog and TechDocs tools."
+---
+
+The backend plugin is the server-side half of Backstage Assistants. It serves assistant metadata to the frontend, streams model replies turn by turn, and runs Backstage actions as tools using the calling user's own credentials. MCP server tools run under a configured static credential or, for per-user servers, under each user's own token. Assistant definitions — prompts, access policies, tool allowlists, and model selections — live in the plugin database and are managed through the in-app editor. `app-config.yaml` holds providers, MCP servers, the approval gate, and runtime limits.
+
+## Requirements
+
+- Backstage **1.56 or later** on the new backend system (`@backstage/backend-defaults`)
+- **Node 22.12** or later
+- A plugin database: **SQLite**, **Postgres**, or **MySQL**
+- Recommended: `@backstage/plugin-signals-backend` so working and unread status reaches the browser as Signals rather than by polling
+
+## Install
+
+<Steps>
+  <Step title="Add the package">
+    Install the backend plugin from your repo root:
+
+    ```bash
+    yarn --cwd packages/backend add @drewswiredin/backstage-plugin-assistants-backend
+    ```
+  </Step>
+
+  <Step title="Register the plugin">
+    Add one line to your backend entry point:
+
+    ```ts
+    // packages/backend/src/index.ts
+    backend.add(import('@drewswiredin/backstage-plugin-assistants-backend'));
+    ```
+  </Step>
+
+  <Step title="Add minimal configuration">
+    Add an `assistants` block and a `backend.actions.pluginSources` entry to `app-config.yaml`:
+
+    ```yaml
+    assistants:
+      defaultModel: openrouter:anthropic/claude-sonnet-5
+      builtinActions: true
+      providers:
+        openrouter:
+          type: openai-compatible
+          apiKey: ${OPENROUTER_API_KEY}
+          baseUrl: https://openrouter.ai/api/v1
+          models:
+            - name: anthropic/claude-sonnet-5
+              contextWindow: 1000000
+
+    backend:
+      actions:
+        pluginSources:
+          - assistants
+    ```
+
+    Set the API key in your backend's environment — never commit it to the repository:
+
+    ```bash
+    export OPENROUTER_API_KEY=sk-or-...
+    ```
+  </Step>
+</Steps>
+
+## Built-in catalog and TechDocs tools
+
+Setting `builtinActions: true` registers three read-only tools that every assistant can use:
+
+| Tool | What it does |
+|---|---|
+| `search-catalog` | Full-text search over the software catalog |
+| `search-techdocs` | Full-text search over TechDocs documents |
+| `read-techdocs` | Reads a TechDocs page by entity and path |
+
+These tools query the Backstage search backend, so they require:
+
+- `@backstage/plugin-search-backend` with the **catalog** and **TechDocs** search collators configured
+- `@backstage/plugin-techdocs-backend` for the pages `read-techdocs` fetches
+
+<Warning>
+  Without `assistants` in `backend.actions.pluginSources`, the tools an assistant is given resolve to an empty list at runtime. Add any other action-providing plugin sources you use (`catalog`, `scaffolder`, `search`, etc.) to the same list.
+</Warning>
+
+## Database migrations
+
+Tables are created by migrations that run automatically at startup. There is nothing to run manually before or after install.
+
+## Healthy startup
+
+On a successful start, the log emits:
+
+```
+AI Assistants backend plugin initialized
+```
+
+The message includes the total model count, the configured `defaultModel` id, the `builtinActions` flag, and the number of assistant definitions already in the database.
+
+The first start seeds one assistant — open to every signed-in user, with the three built-in read tools — and designates it as the default. Open `/assistants` to start a conversation.
+
+<Note>
+  The backend refuses to start until `assistants.defaultModel` is set and at least one provider with at least one model is configured. The exact error messages are listed under [Startup errors](/backend/production#startup-errors).
+</Note>
+
+## Next steps
+
+<CardGroup cols={3}>
+  <Card title="Providers" href="/backend/providers">
+    Connect OpenAI, Anthropic, Azure, or any OpenAI-compatible endpoint
+  </Card>
+  <Card title="MCP Servers" href="/backend/mcp-servers">
+    Give assistants tools from external MCP servers
+  </Card>
+  <Card title="Permissions" href="/backend/permissions">
+    Gate access with Backstage permissions
+  </Card>
+</CardGroup>

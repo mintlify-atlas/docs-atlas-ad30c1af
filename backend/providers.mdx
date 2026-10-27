@@ -1,0 +1,172 @@
+---
+title: "Configure Model Providers for Backstage Assistants"
+sidebarTitle: "Providers"
+description: "Connect OpenAI, Anthropic, Azure OpenAI, or any OpenAI-compatible endpoint. Configure model context windows, reasoning, and output token limits."
+---
+
+Providers are configured under `assistants.providers.<id>` in `app-config.yaml`, where `<id>` is a free label you choose. Model identifiers throughout the plugin are `<providerId>:<model>` — for example `openrouter:anthropic/claude-sonnet-5` or `azure:my-gpt-5-5-deployment`. Several providers can be configured at once; the union of their `models` arrays is the global model pool that admins assign to assistants.
+
+<Note>
+  Every entry in a provider's `models` list must be an object with at least a `name` field. A plain string list (`models: [gpt-4o]`) fails validation at startup.
+</Note>
+
+## Built-in provider types
+
+All four provider types are built in and their AI SDK packages ship with the plugin. Each example below sits under `assistants.providers`.
+
+<Tabs>
+  <Tab title="OpenAI">
+    ```yaml
+    openai:
+      type: openai
+      apiKey: ${OPENAI_API_KEY}
+      models:
+        - name: gpt-5.5
+          contextWindow: 400000
+          reasoning: true
+    # model ids: openai:gpt-5.5
+    ```
+  </Tab>
+
+  <Tab title="Anthropic">
+    ```yaml
+    anthropic:
+      type: anthropic
+      apiKey: ${ANTHROPIC_API_KEY}
+      models:
+        - name: claude-opus-5
+          contextWindow: 1000000
+          reasoning: true
+        - name: claude-sonnet-5
+          contextWindow: 1000000
+          reasoning: true
+    # model ids: anthropic:claude-opus-5, anthropic:claude-sonnet-5
+    ```
+
+    <Warning>
+      Set `reasoning: true` only on Anthropic models **Claude 4.6 or later**. Older Claude models reject requests that include reasoning parameters.
+    </Warning>
+  </Tab>
+
+  <Tab title="Azure OpenAI">
+    For Azure OpenAI and AI Foundry, your `models` entries are your deployment names. Point `baseUrl` at the resource's `/openai` path; requests use the `v1` API. For older deployment-based URLs, set `options.useDeploymentBasedUrls: true` and add a dated `options.apiVersion`:
+
+    ```yaml
+    azure:
+      type: azure
+      apiKey: ${AZURE_API_KEY}
+      baseUrl: https://<resource>.openai.azure.com/openai
+      models:
+        - name: my-gpt-5-5-deployment
+          contextWindow: 400000
+          reasoning: true
+      # options:
+      #   useDeploymentBasedUrls: true
+      #   apiVersion: "2025-01-01-preview"
+    # model ids: azure:my-gpt-5-5-deployment
+    ```
+  </Tab>
+
+  <Tab title="OpenAI-compatible">
+    The `openai-compatible` type uses the OpenAI SDK with a custom `baseUrl`. This covers OpenRouter, local gateways, and similar endpoints:
+
+    ```yaml
+    openrouter:
+      type: openai-compatible
+      apiKey: ${OPENROUTER_API_KEY}
+      baseUrl: https://openrouter.ai/api/v1
+      models:
+        - name: anthropic/claude-sonnet-5
+          contextWindow: 1000000
+          reasoning: true
+        - name: openai/gpt-5.5
+          contextWindow: 400000
+          reasoning: true
+    # model ids: openrouter:anthropic/claude-sonnet-5, openrouter:openai/gpt-5.5
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  Multiple providers can be active at once. The model pool available to admins in the editor is the union of every provider's `models` list.
+</Note>
+
+## Per-model options
+
+Each entry in a provider's `models` list accepts three optional fields in addition to `name`.
+
+### `contextWindow`
+
+The model's maximum input token count. This value drives the context gauge displayed in the chat composer header. Omit it to leave the limit unknown.
+
+### `reasoning: true`
+
+Marks the model as a reasoning model. When set, the chat UI shows an effort picker next to the model selector. The available tiers are fixed — **low**, **medium**, **high**, and **max** — and are translated to each provider's own parameter at request time:
+
+| Provider type | Sent as |
+|---|---|
+| `openai`, `openai-compatible`, `azure` | `reasoningEffort: <tier>` (`max` is sent as `xhigh`) |
+| `anthropic` | `thinking: { type: adaptive }` + `output_config.effort: <tier>` |
+
+The picker starts at Default, which sends nothing, so the provider's own default applies. The selected tier is remembered per conversation. Reasoning output renders as a collapsible **Reasoning** block in the chat.
+
+```yaml
+models:
+  - name: gpt-5.5
+    reasoning: true
+  - name: my-small-deployment # no flag — no effort picker for this model
+```
+
+### `maxOutputTokens`
+
+Caps the number of tokens the model may generate per turn. Omit it and the provider's own default ceiling applies.
+
+The main case where this is needed: an Anthropic-type provider with a custom deployment name that the `@ai-sdk/anthropic` package does not recognize. In that case the SDK falls back to a 4096-token ceiling, which causes tool calls to run normally but the turn to end with no text reply. Fix it by setting a realistic ceiling explicitly:
+
+```yaml
+models:
+  - name: my-foundry-deployment # a bare deployment name, not a plain claude-* id
+    reasoning: true
+    maxOutputTokens: 128000
+```
+
+## Adding a provider type from a backend module
+
+A backend module can register provider types beyond the four built in — for example a cloud SDK or a company AI gateway — through `assistantsModelProvidersExtensionPoint`. The module registers a factory for a `type` string; each `assistants.providers.<id>` block whose `type` matches is handed to that factory, with its `models` array read as usual.
+
+```ts
+import { createBackendModule } from '@backstage/backend-plugin-api';
+import { assistantsModelProvidersExtensionPoint } from '@drewswiredin/backstage-plugin-assistants-backend';
+import { createGateway } from './gateway';
+
+export default createBackendModule({
+  pluginId: 'assistants',
+  moduleId: 'gateway-provider',
+  register(env) {
+    env.registerInit({
+      deps: { providers: assistantsModelProvidersExtensionPoint },
+      async init({ providers }) {
+        providers.addProviderType('gateway', ({ config }) => {
+          const gateway = createGateway({ url: config.getString('url') });
+          return { languageModel: name => gateway.languageModel(name) };
+        });
+      },
+    });
+  },
+});
+```
+
+With that module registered, add a provider block using the new type:
+
+```yaml
+assistants:
+  providers:
+    corp:
+      type: gateway
+      url: https://ai.example.com
+      models:
+        - name: frontier-large
+# model ids: corp:frontier-large
+```
+
+`languageModel` returns an AI SDK language model. `reasoningOptions(name, level)` supplies the `providerOptions` for the effort tiers of models marked `reasoning: true`; omit it and no tier parameter is sent. A built-in type cannot be replaced by a module, and an unknown `type` fails at startup with a list of the available types.

@@ -1,0 +1,98 @@
+---
+title: "knowledgeRankingExtensionPoint: Custom Search Ranking"
+sidebarTitle: "Knowledge Ranking"
+description: "Replace the default knowledge index ranker with a backend module using knowledgeRankingExtensionPoint from the semantic search module's /alpha export."
+---
+
+The semantic search module's default ranker selects the best candidates by fused score after applying source weights and permission checks. For cases where domain-specific logic should determine the final ordering — such as favouring recently updated tickets, boosting a particular document type, or deprioritising stale content — `knowledgeRankingExtensionPoint` lets a backend module replace the ranker entirely with a custom function.
+
+## Import
+
+Import `knowledgeRankingExtensionPoint` from the `/alpha` subpath of the semantic search module:
+
+```ts
+import { knowledgeRankingExtensionPoint } from '@drewswiredin/backstage-plugin-assistants-backend-module-semantic-search/alpha';
+```
+
+## Ranker function signature
+
+Call `ranking.setRanker()` with a function that accepts a context object and returns a sorted array of candidates:
+
+```ts
+ranking.setRanker(({ query, phrasings, types, candidates, maxResults }) => {
+  // return a subset of candidates, sorted by your own score
+  return candidates.slice(0, maxResults);
+});
+```
+
+The context object provides:
+
+<ParamField path="query" type="string">
+  The user's original question, as submitted to `search-knowledge`.
+</ParamField>
+
+<ParamField path="phrasings" type="string[]">
+  Up to three alternative phrasings the model generated for the same question. Useful for re-scoring across a broader notion of relevance.
+</ParamField>
+
+<ParamField path="types" type="string[]">
+  The document types searched in this request (for example `techdocs`, `software-catalog`, `jira`).
+</ParamField>
+
+<ParamField path="candidates" type="Candidate[]">
+  Up to 60 candidates after fusion and permission filtering that the ranker may read and reorder. Each candidate has:
+  - `score` — the fused score after source weights
+  - `rank` — the candidate's position in each retrieval list (semantic, keyword, rare-word, fuzzy)
+  - `type` — the document type (for example `techdocs`)
+  - entity ref — the catalog entity the document is gated by, if any
+  - `metadata` — short fields the search collator attached (strings, numbers, booleans; at most 16 fields, strings up to 200 characters)
+</ParamField>
+
+<ParamField path="maxResults" type="number">
+  The maximum number of results to return for this request, accounting for per-type caps and global config.
+</ParamField>
+
+## Recency boost example
+
+The following module boosts candidates updated within the last 90 days by 20%, then sorts by the adjusted score:
+
+```ts
+import { createBackendModule } from '@backstage/backend-plugin-api';
+import { knowledgeRankingExtensionPoint } from '@drewswiredin/backstage-plugin-assistants-backend-module-semantic-search/alpha';
+
+export default createBackendModule({
+  pluginId: 'assistants',
+  moduleId: 'knowledge-recency',
+  register(env) {
+    env.registerInit({
+      deps: { ranking: knowledgeRankingExtensionPoint },
+      async init({ ranking }) {
+        ranking.setRanker(({ candidates, maxResults }) =>
+          candidates
+            .map(candidate => {
+              const updated = Date.parse(String(candidate.metadata?.updated));
+              const ageDays = (Date.now() - updated) / 86_400_000;
+              const boost = ageDays < 90 ? 1.2 : 1;
+              return { candidate, score: candidate.score * boost };
+            })
+            .sort((a, b) => b.score - a.score)
+            .slice(0, maxResults)
+            .map(({ candidate }) => candidate),
+        );
+      },
+    });
+  },
+});
+```
+
+## Security guarantee
+
+The ranker runs **after** the permission check. The `candidates` array contains only results the calling user is permitted to read — catalog and TechDocs results have already been filtered against the user's entity read permissions. Any result the ranker returns that was not in the `candidates` array is silently dropped before the response is sent, so a custom ranker cannot surface content the user cannot read.
+
+<Warning>
+  Returning results not present in the `candidates` array has no effect — they are silently discarded. Your ranker must select from and reorder the provided candidates; it cannot inject new results.
+</Warning>
+
+<Note>
+  The `knowledgeRankingExtensionPoint` is exported from the `/alpha` subpath, following Backstage's convention for extension points whose API surface may still evolve. Importing from `./alpha` is intentional and not a stability concern for normal use; be prepared to adapt if the interface changes in a future minor release.
+</Note>

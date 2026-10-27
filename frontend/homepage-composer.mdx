@@ -1,0 +1,113 @@
+---
+title: "Homepage Composer: Start a Conversation from Any Home Page"
+sidebarTitle: "Homepage Composer"
+description: "The assistantsHomeModule adds an AssistantComposer widget to your Backstage home page in four configurable looks, handing conversations off to the panel."
+---
+
+The homepage composer is a way to start a conversation with an assistant directly from the Backstage home page, without navigating to `/assistants` first. It is not a second chat interface — it has no conversation history and no message list. It is a single composer that creates a new thread on the first send and immediately hands it off to the floating panel, which opens and continues the conversation. The composer then resets to a blank state ready for the next question. If the panel is not installed, the new thread opens on the full Assistants page instead.
+
+## Install
+
+The homepage composer ships behind its own entry point (`/home`) so that `@backstage/plugin-home-react` — its only dependency — is an optional peer. An app without a home page never loads it, and your package manager will not install it automatically. You must add it alongside `@backstage/plugin-home`:
+
+```bash
+yarn --cwd packages/app add @backstage/plugin-home-react
+```
+
+Then import `assistantsHomeModule` from the `/home` entry point and add it to your app's features:
+
+```ts
+import { assistantsHomeModule } from '@drewswiredin/backstage-plugin-assistants/home';
+
+export default createApp({
+  features: [assistantsPlugin, assistantsPanelModule, assistantsHomeModule],
+});
+```
+
+<Note>
+  `assistantsHomeModule` is exported from `@drewswiredin/backstage-plugin-assistants/home`, not from `./alpha`. This separate entry point is what makes `@backstage/plugin-home-react` optional: the main plugin bundle never imports it, so an app without a home page never pays for it.
+</Note>
+
+## Four variants
+
+The `AssistantComposer` widget supports four visual variants, set with the `variant` config property. Each suits a different position and height in the home page grid.
+
+<Tabs>
+  <Tab title="bar">
+    The composer alone on one row, like a search bar. There is no assistant picker, no attachment controls, and no model picker — it uses whichever assistant the user last picked, or the default. Best placed at the top of the grid spanning the full width.
+
+    **Grid rows:** 2
+  </Tab>
+  <Tab title="padded">
+    The assistant picker and the full composer (attachments, model picker, reasoning effort picker), framed inside the card's padding. This is the default variant.
+
+    **Grid rows:** 3
+  </Tab>
+  <Tab title="full">
+    The same content as `padded`, but edge to edge — no inner padding. Use this when the card container already handles padding or when you want the composer to fill the full card width.
+
+    **Grid rows:** 3
+  </Tab>
+  <Tab title="titled">
+    The same as `padded`, but with a card header above it. The header text is set with the `title` property (default: "Ask the assistant"). Matches the visual style of other titled home page cards.
+
+    **Grid rows:** 4
+  </Tab>
+</Tabs>
+
+Configure the variant and place the widget in the home page grid using app-config extensions:
+
+```yaml
+app:
+  extensions:
+    - home-page-widget:assistants/AssistantComposer:
+        config:
+          variant: padded
+    - page:home:
+        config:
+          defaultConfig:
+            - component: AssistantComposer
+              column: 0
+              row: 0
+              width: 12
+              height: 3 # match the variant's grid rows
+```
+
+The `width` config property sets the composer's width as a percentage of the card (20–100). It defaults to 100 for `bar` and 80 for the other variants.
+
+## Conversation flow
+
+<Steps>
+  <Step title="User types and sends">
+    The user types a message in the composer and presses Enter or clicks Send.
+  </Step>
+  <Step title="Thread is created">
+    The composer creates a new thread through the surface runtime and receives the thread ID.
+  </Step>
+  <Step title="Panel opens">
+    The composer calls `usePanelControl().open({ threadId })`, which the panel wrapper provides as a React context to every page. The panel opens and resumes the thread.
+  </Step>
+  <Step title="Composer resets">
+    The composer remounts on a fresh blank thread, ready for the next question.
+  </Step>
+</Steps>
+
+Without the panel installed, the new thread opens on the `/assistants` page instead of opening the panel.
+
+## Composer placeholder
+
+The hint text shown in the empty composer is the assistant's own "Composer placeholder" text, set in the admin editor. If none is set, it falls back to "Ask about your services, docs, or anything in Backstage…". For the `bar` variant, a short placeholder like "Ask anything about our systems…" on the default assistant makes the widget read like a search box.
+
+## Using `AssistantComposer` in your own cards
+
+`AssistantComposer` is also exported directly from the `/home` entry point for use inside custom home page cards or other page components:
+
+```tsx
+import { AssistantComposer } from '@drewswiredin/backstage-plugin-assistants/home';
+
+<AssistantComposer variant="padded" width={90} />;
+```
+
+The `full` variant assumes the home card's 16 px content padding. The other variants fit any container without adjustment.
+
+A user's saved home page layout (from the home page's drag-and-drop editor) takes precedence over `defaultConfig` until they choose "Restore defaults".

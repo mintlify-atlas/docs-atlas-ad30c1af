@@ -1,0 +1,133 @@
+{
+  "projectType": "framework",
+  "projectName": "Backstage Assistants",
+  "projectDescription": "A set of Backstage plugins that embed AI assistants directly into your developer portal, grounding every answer in your catalog and TechDocs and running every Backstage action as the signed-in user.",
+  "theme": "luma",
+  "primaryColor": "#7624f4",
+  "lightColor": "#040c0c",
+  "darkColor": "#fcfcfc",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "first-run"
+            ]
+          },
+          {
+            "group": "Frontend",
+            "pages": [
+              "frontend/chat-page",
+              "frontend/panel",
+              "frontend/homepage-composer",
+              "frontend/client-tools"
+            ]
+          },
+          {
+            "group": "Backend",
+            "pages": [
+              "backend/installation",
+              "backend/providers",
+              "backend/mcp-servers",
+              "backend/permissions",
+              "backend/production"
+            ]
+          },
+          {
+            "group": "Semantic Search",
+            "pages": [
+              "semantic-search/overview",
+              "semantic-search/configuration",
+              "semantic-search/custom-ranking"
+            ]
+          },
+          {
+            "group": "Concepts",
+            "pages": [
+              "concepts/assistants-and-tools",
+              "concepts/approval-gate",
+              "concepts/security"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "Configuration",
+            "pages": [
+              "reference/config",
+              "reference/http-routes",
+              "reference/frontend-exports"
+            ]
+          },
+          {
+            "group": "Extension Points",
+            "pages": [
+              "reference/model-providers-extension",
+              "reference/client-tool-blueprint",
+              "reference/knowledge-ranking-extension"
+            ]
+          },
+          {
+            "group": "Troubleshooting",
+            "pages": [
+              "reference/troubleshooting",
+              "reference/changelog"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Grounded answers from the Backstage catalog and TechDocs — no hallucinated facts",
+    "Backstage actions run as the signed-in user with their own permissions",
+    "MCP server integration: shared credential or per-user token (GitHub, Microsoft, OAuth)",
+    "Client tools contributed by any frontend plugin, running in the browser as the user",
+    "Approval gate: Allow / Always allow / Deny before any write tool executes",
+    "Semantic + fuzzy + keyword knowledge index via pgvector and pg_trgm",
+    "Floating panel that reads the page it sits beside via read_current_page",
+    "Homepage composer in four looks; scaffolder template forms rendered inline in chat",
+    "Generative UI: inline RJSF forms, Mermaid diagrams, download chips",
+    "In-app admin editor — no config file required for assistant definitions",
+    "Supports OpenAI, Anthropic, Azure OpenAI, and any OpenAI-compatible endpoint"
+  ],
+  "publicApiSurface": [
+    "assistantsPlugin (default export from @drewswiredin/backstage-plugin-assistants/alpha)",
+    "assistantsPanelModule",
+    "assistantsHomeModule",
+    "AssistantComposer (component)",
+    "AssistantClientToolBlueprint",
+    "clientToolDataRef",
+    "clientToolsApiRef / ClientToolsApi",
+    "assistantsApiRef / AssistantsApi",
+    "AssistantsNavIcon",
+    "usePanelControl",
+    "rootRouteRef / threadRouteRef",
+    "assistantUsePermission / assistantManagePermission (from -common)",
+    "assistantsModelProvidersExtensionPoint (backend)",
+    "knowledgeRankingExtensionPoint (from -backend-module-semantic-search/alpha)",
+    "GET /api/assistants/status",
+    "POST /api/assistants/chat",
+    "GET /api/assistants/chat/resume/:threadId",
+    "POST /api/assistants/chat/cancel/:threadId",
+    "GET /api/assistants/threads",
+    "POST /api/assistants/threads",
+    "GET /api/assistants/threads/:id",
+    "PATCH /api/assistants/threads/:id",
+    "DELETE /api/assistants/threads/:id",
+    "GET /api/assistants/capabilities",
+    "GET /api/assistants/manage/assistants",
+    "POST /api/assistants/manage/assistants",
+    "PUT /api/assistants/manage/assistants/:id",
+    "DELETE /api/assistants/manage/assistants/:id",
+    "PUT /api/assistants/manage/assistants/:id/default"
+  ]
+}

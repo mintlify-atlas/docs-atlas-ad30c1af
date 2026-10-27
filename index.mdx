@@ -1,20 +1,79 @@
 ---
-title: "Introduction"
-description: "Welcome to your project"
+title: "Backstage Assistants: AI Chat for Your Developer Portal"
+sidebarTitle: "Home"
+description: "Embed AI assistants in Backstage that answer from your catalog and TechDocs, run scaffolder templates, and connect to MCP servers — all as the signed-in user."
 ---
 
-Write a short description of your product here. What it does, who it's for, and what they can accomplish with it.
+Backstage Assistants adds a fully integrated AI chat experience to your developer portal. Every answer is grounded in your catalog and TechDocs — no hallucinated facts about your systems. Every Backstage action runs with the permissions of the person asking, so the assistant can look up entities, search docs, or kick off a scaffolder template on their behalf.
 
-<Tip>
-  Ready to make this your own? Start by editing this page. Update your `docs.json` file to customize your site. Then fill out the [Quickstart](/quickstart) page.
-</Tip>
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Install the frontend and backend packages, wire up a model provider, and chat with your catalog in under 15 minutes.
+  </Card>
+  <Card title="Backend Configuration" icon="server" href="/backend/installation">
+    Configure model providers, MCP servers, the approval gate, and permissions in app-config.yaml.
+  </Card>
+  <Card title="Frontend Features" icon="window" href="/frontend/chat-page">
+    Explore the chat page, floating panel, homepage composer, and generative UI capabilities.
+  </Card>
+  <Card title="Semantic Search" icon="magnifying-glass" href="/semantic-search/overview">
+    Add the semantic search module for meaning-based, fuzzy, and keyword retrieval over all your indexed content.
+  </Card>
+</CardGroup>
 
-<Card title="Quickstart" icon="rocket" href="/quickstart">
-  This card links to the quickstart page in your project.
-</Card>
-<Card title="Components" icon="puzzle-piece" href="https://mintlify.com/docs/components">
-  Add cards, callouts, steps, tabs, and more to design and structure your pages.
-</Card>
-<Card title="Settings" icon="gear" href="https://mintlify.com/docs/organize/settings">
-  Set your site name, branding, and navigation in the `docs.json` file.
-</Card>
+## What it does
+
+Backstage Assistants is four npm packages that wire together into your existing Backstage app. The frontend plugin adds a chat page at `/assistants`, a floating panel that opens beside any page, and a homepage composer. The backend plugin streams replies, runs Backstage actions as the calling user, and connects to external MCP servers. An optional semantic search module indexes everything Backstage search crawls into a pgvector knowledge base.
+
+<CardGroup cols={3}>
+  <Card title="Grounded Answers" icon="shield-check">
+    Answers come from your catalog and TechDocs, not model memory. Add the semantic search module for fuzzy and meaning-based retrieval.
+  </Card>
+  <Card title="Actions as the User" icon="user-shield">
+    The assistant runs Backstage actions — catalog lookups, scaffolder templates, TechDocs searches — with the calling user's own permissions.
+  </Card>
+  <Card title="MCP Servers" icon="plug">
+    Connect GitHub, Atlassian, Azure DevOps, or any MCP server. Run tools under a shared credential or per user with their own token.
+  </Card>
+  <Card title="Approval Gate" icon="hand">
+    Write tools pause for Allow / Always allow / Deny before they run. The gate is enforced in code, not in a model prompt.
+  </Card>
+  <Card title="Generative UI" icon="wand-magic-sparkles">
+    Replies include inline RJSF forms with scaffolder field extensions, Mermaid diagrams, and download chips for generated files.
+  </Card>
+  <Card title="In-App Editor" icon="pen-to-square">
+    Admins create and edit assistants — prompt, tools, models, access policy — directly in the portal. No config file required.
+  </Card>
+</CardGroup>
+
+## Packages
+
+Backstage Assistants ships as four packages. Install the first two to get started; the others are optional.
+
+| Package | Purpose |
+|---|---|
+| `@drewswiredin/backstage-plugin-assistants` | Frontend plugin — chat page, panel, homepage composer, admin editor |
+| `@drewswiredin/backstage-plugin-assistants-backend` | Backend plugin — model loop, action tools, MCP servers, API |
+| `@drewswiredin/backstage-plugin-assistants-common` | Shared types and permissions (installed transitively) |
+| `@drewswiredin/backstage-plugin-assistants-backend-module-semantic-search` | Optional semantic + fuzzy + keyword knowledge index |
+
+## Requirements
+
+<Note>
+Backstage Assistants requires the **new** Backstage frontend system (`createApp` from `@backstage/frontend-defaults`) on Backstage 1.56 or later. It does not mount in a legacy `packages/app` built on `@backstage/app-defaults`.
+</Note>
+
+- Backstage 1.56+ with the new frontend and backend systems
+- Node 22.12 or later
+- React 18 and `react-router-dom` ^6.30.2
+- A plugin database: SQLite, Postgres, or MySQL
+- A model provider API key: OpenAI, Anthropic, Azure OpenAI, or any OpenAI-compatible endpoint
+
+<CardGroup cols={2}>
+  <Card title="Get Started" icon="arrow-right" href="/quickstart">
+    Follow the quickstart to install, wire up, and start chatting.
+  </Card>
+  <Card title="Concepts" icon="book" href="/concepts/assistants-and-tools">
+    Understand how assistants, tools, actions, and the approval gate work together.
+  </Card>
+</CardGroup>

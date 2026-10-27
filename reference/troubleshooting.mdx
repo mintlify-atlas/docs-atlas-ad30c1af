@@ -1,0 +1,205 @@
+---
+title: "Troubleshoot Backstage Assistants"
+sidebarTitle: "Troubleshooting"
+description: "Diagnose and fix common issues with Backstage Assistants: missing tools, startup errors, provider auth failures, MCP timeouts, and permission problems."
+---
+
+Troubleshooting covers the most common issues at startup, during conversation turns, and with MCP servers. Most problems fall into one of three categories: configuration errors the backend catches at startup, provider authentication failures that surface during a turn, and permission or connectivity issues that appear in the UI. The backend log is the primary diagnostic tool — check it first for startup messages and per-turn error lines.
+
+<Tip>
+  On a healthy startup the backend log shows `AI Assistants backend plugin initialized` with four fields: `models` (total model count), `defaultModel` (the active default), `builtinActions` (`true` or `false`), and `assistants` (the number of defined assistants). If this line is absent, the plugin did not finish initializing — look for a startup error above it.
+</Tip>
+
+## Common symptoms
+
+<Accordion title="An assistant shows no tools; the log says 'Assistant action '<name>' is not available; skipping'">
+  **Cause:** `assistants` is missing from `backend.actions.pluginSources` in `app-config.yaml`, or `builtinActions` is set to `false`.
+
+  **Fix:** Add `assistants` to the `pluginSources` list and set `builtinActions: true` to enable the built-in catalog and TechDocs read tools:
+
+  ```yaml
+  assistants:
+    builtinActions: true
+
+  backend:
+    actions:
+      pluginSources:
+        - assistants
+  ```
+</Accordion>
+
+<Accordion title="Backend exits with 'assistants.defaultModel '<id>' is not one of the configured models'">
+  **Cause:** The `defaultModel` value does not match any configured `<providerId>:<model>` in the model pool.
+
+  **Fix:** Correct `assistants.defaultModel` so it exactly matches one of the model ids from your providers. Model ids take the form `<providerId>:<modelName>`, for example `openrouter:anthropic/claude-sonnet-5`.
+
+  ```yaml
+  assistants:
+    defaultModel: openrouter:anthropic/claude-sonnet-5 # must match a configured model
+    providers:
+      openrouter:
+        type: openai-compatible
+        models:
+          - name: anthropic/claude-sonnet-5
+  ```
+</Accordion>
+
+<Accordion title="Provider 401 or 403 appears under 'chat turn errored'">
+  **Cause:** The API key is wrong, the `baseUrl` is incorrect, or the Azure `apiVersion` does not match. Alternatively, the environment variable holding the key is not set in the backend's process environment.
+
+  **Fix:** Verify the key and URL for your provider. For Azure, confirm the `baseUrl` points at your resource's `/openai` path. Check that the environment variable is exported in the shell or process where the backend runs — it is not enough to have it in `.env` files that are not sourced.
+
+  ```bash
+  echo $OPENAI_API_KEY   # should print the key; empty means it is not set
+  ```
+</Accordion>
+
+<Accordion title="A turn ends with tool calls and no reply on an Anthropic-type provider with a custom deployment name">
+  **Cause:** The `@ai-sdk/anthropic` package falls back to a 4,096-token output ceiling for model ids it does not recognise — any deployment name that is not a plain `claude-*` id. The turn runs tool calls normally but then has no budget left for the reply.
+
+  **Fix:** Set `maxOutputTokens` on the model entry to a value large enough for your use case:
+
+  ```yaml
+  assistants:
+    providers:
+      my-azure:
+        type: anthropic
+        models:
+          - name: my-foundry-deployment
+            reasoning: true
+            maxOutputTokens: 128000
+  ```
+</Accordion>
+
+<Accordion title="An MCP server is never reachable; the log shows 'MCP server '<id>' tool listing failed: ... timed out'">
+  **Cause:** The server takes longer to start than `connectTimeoutMs` allows. This is common with servers launched via `uvx` or `npx`, which must download and install the package before the server can accept connections.
+
+  **Fix:** Raise `connectTimeoutMs` for the slow server. Python servers started with `uvx` and Node servers started with `npx` often need 15,000–20,000 ms:
+
+  ```yaml
+  assistants:
+    mcp:
+      servers:
+        atlassian:
+          transport: stdio
+          command: uvx
+          args: [mcp-atlassian]
+          connectTimeoutMs: 20000
+  ```
+</Accordion>
+
+<Accordion title="'You are not permitted to use assistants' error page">
+  **Cause:** The Backstage permission policy denies `assistant.use` for the signed-in user.
+
+  **Fix:** Grant `assistant.use` to the appropriate users or groups in your permission policy. Under create-app's default allow-all policy every signed-in user holds the permission automatically; the error appears only when a custom policy is active. See the backend README's [Grant assistant.use and assistant.manage](https://www.npmjs.com/package/@drewswiredin/backstage-plugin-assistants-backend#grant-assistantuse-and-assistantmanage) section for a complete example.
+</Accordion>
+
+<Accordion title="The gear icon is missing from the chat sidebar">
+  **Cause:** The Backstage permission policy denies `assistant.manage` for the signed-in user. The gear opens the admin editor; it is hidden when the user does not have this permission.
+
+  **Fix:** Grant `assistant.manage` to admin users or groups. Separate this from `assistant.use` so only platform engineers can create and edit assistants.
+</Accordion>
+
+<Accordion title="'Connect GitHub' stays after signing in, or the sign-in popup fails to open">
+  **Cause:** Either no `github` auth provider is configured under `auth.providers` in `app-config.yaml`, or there is no `integrations` entry for the MCP server's `host` value (required for SCM-based auth).
+
+  **Fix:** Configure the auth provider and the matching integration. The `provider` id in `userCredentials` must match a configured Backstage auth provider, and `host` must match an `integrations` entry for that host:
+
+  ```yaml
+  auth:
+    providers:
+      github:
+        development:
+          clientId: ${GITHUB_CLIENT_ID}
+          clientSecret: ${GITHUB_CLIENT_SECRET}
+
+  integrations:
+    github:
+      - host: github.com
+        token: ${GITHUB_TOKEN}
+  ```
+</Accordion>
+
+<Accordion title="An OAuth sign-in popup shows the server's error about the redirect URL">
+  **Cause:** The MCP server's authorization server does not allow the backend's OAuth callback URL as a valid redirect destination.
+
+  **Fix:** Register `<backend>/api/assistants/mcp/oauth/callback` as an allowed redirect URL at the authorization server. The exact callback URL is logged at backend startup. If the server requires a pre-registered client, set `clientId` (and `clientSecret` for a confidential client) under `userCredentials`.
+</Accordion>
+
+<Accordion title="The OAuth popup says 'started by a different Backstage user, or your Backstage session could not be confirmed'">
+  **Cause:** The browser did not send a Backstage cookie to the callback URL. This happens when the backend is served on a different origin from the frontend (blocking third-party cookies) or when the browser blocks cross-site cookies entirely.
+
+  **Fix:** Serve the backend on the same site as the frontend app so the cookie is first-party. If that is not possible, configure the backend's domain to be a subdomain of the app's domain and ensure cookies are allowed. The callback URL is on the backend's own domain; the cookie is issued just before the popup opens.
+</Accordion>
+
+## Startup errors
+
+Each of the following is an `InputError` raised while the backend reads `app-config.yaml`. The backend exits immediately with the message.
+
+<Accordion title="Unsupported provider type '<type>' for provider '<id>'">
+  The `type` field in a provider block is not one of `openai`, `anthropic`, `azure`, `openai-compatible`, or a type added by a backend module. The error message lists all available types. Check for typos and confirm any custom module is registered in the backend.
+</Accordion>
+
+<Accordion title="assistants config must declare at least one model">
+  No provider under `assistants.providers` has a `models` entry, or every `models` list is empty. Add at least one model object to at least one provider.
+</Accordion>
+
+<Accordion title="assistants.defaultModel '<id>' is not one of the configured models">
+  The value of `assistants.defaultModel` does not match any `<providerId>:<modelName>` in the model pool. Correct the id to match an entry in your `providers` config.
+</Accordion>
+
+<Accordion title="assistants.mcp.servers.<id>.transport must be one of 'http', 'sse', 'stdio'">
+  The `transport` field is missing or set to an unrecognised value. Use exactly `http`, `sse`, or `stdio`.
+</Accordion>
+
+<Accordion title="assistants.mcp.servers.<id>: stdio transport requires 'command'">
+  A server with `transport: stdio` has no `command` field. Set `command` to the executable to spawn.
+</Accordion>
+
+<Accordion title="assistants.mcp.servers.<id>: 'http' (or 'sse') transport requires 'url'">
+  A remote server is missing its `url` field. Add `url` pointing at the server's endpoint.
+</Accordion>
+
+<Accordion title="assistants.mcp.connectTimeoutMs must be a positive number of milliseconds">
+  The global `connectTimeoutMs` (or a per-server override) is set to zero or a negative number. Set it to a positive integer in milliseconds (default is `8000`).
+</Accordion>
+
+<Accordion title="assistants model '<id>': maxOutputTokens must be a positive number of tokens">
+  The `maxOutputTokens` on a model entry is zero or negative. Set it to a positive integer.
+</Accordion>
+
+<Accordion title="headers.<name> is the per-user token; remove the static value">
+  A server has both `userCredentials` and a static value in `headers` (or `env` for stdio) for the same credential field. Remove the static credential — `userCredentials` sends the user's own token in that header automatically.
+</Accordion>
+
+<Accordion title="assistants.mcp.oauth.encryptionKey is required">
+  A server uses `userCredentials.provider: oauth` but `mcp.oauth.encryptionKey` is not set. Generate a 32-byte base64 key and set it:
+
+  ```bash
+  openssl rand -base64 32
+  ```
+
+  Then add it to your config as an environment variable reference:
+
+  ```yaml
+  assistants:
+    mcp:
+      oauth:
+        encryptionKey: ${ASSISTANTS_MCP_OAUTH_KEY}
+  ```
+</Accordion>
+
+<Accordion title="OAuth client configuration errors (clientSecret, clientId, clientMetadataDocument)">
+  The OAuth client configuration is inconsistent:
+  - `clientSecret` requires `clientId` — set `clientId` or remove `clientSecret`.
+  - `clientId` and `clientMetadataDocument: true` cannot both be set — choose one.
+  - `provider: oauth` requires a remote (`http` or `sse`) transport.
+</Accordion>
+
+<Accordion title="assistants.mcp.servers.<id>.argumentRules validation errors">
+  An argument rule entry has an invalid regular expression in `pattern`, is missing both `pattern` and `equals`, or has a non-primitive `equals` value. Fix the rule: `pattern` must be a valid regex string, and `equals` must be a string, number, or boolean.
+</Accordion>
+
+<Accordion title="assistants.mcp.servers.<id>.approvalPreview validation errors">
+  An `approvalPreview` entry has `type` set to something other than `file` or `files`, or is missing a required `fields` entry (`path` and `content` for `file`; `files` for `files`). Check the type spelling and required fields.
+</Accordion>

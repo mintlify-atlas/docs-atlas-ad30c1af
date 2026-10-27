@@ -1,0 +1,115 @@
+---
+title: "Backstage Assistants Chat Page and Generative UI"
+sidebarTitle: "Chat Page"
+description: "The full-screen chat experience at /assistants: conversations, model/effort pickers, generative UI with forms and diagrams, and the admin editor."
+---
+
+The Assistants chat page lives at `/assistants` and is the primary full-screen interface for AI conversations in your developer portal. It opens with an assistant rail on the left listing every assistant you can access, a conversation list for the selected assistant, and the conversation surface filling the rest of the screen. A new conversation begins with the assistant's description and its starter suggestions; selecting a suggestion sends it immediately. You can navigate directly to a specific assistant with `?assistant=<id>` or to a specific conversation with `/assistants/threads/<id>`.
+
+## Conversations
+
+Each assistant keeps its own list of conversations, shown in the left panel when that assistant is selected. You can have as many conversations per assistant as you need.
+
+<CardGroup cols={2}>
+  <Card title="Organize conversations" icon="list">
+    Every row in the conversation list has a menu for renaming, pinning, or deleting that conversation. Pinned conversations sort to the top of the list so your most important threads stay accessible.
+  </Card>
+  <Card title="Assistant details" icon="info">
+    The info button beside an assistant's name shows its description, its tools grouped by source, and the models it is allowed to use.
+  </Card>
+</CardGroup>
+
+## Composer and model controls
+
+The composer at the bottom of the conversation holds all the controls needed to craft and send a message.
+
+<CardGroup cols={2}>
+  <Card title="Model and reasoning effort" icon="sliders">
+    Pick any model the assistant allows directly in the composer. For reasoning models, a second picker sets the reasoning level: `low`, `medium`, `high`, or `max`.
+  </Card>
+  <Card title="Context gauge" icon="gauge">
+    A gauge in the composer shows how much of the model's `contextWindow` the current conversation uses, so you know when a long thread is approaching the model's limit.
+  </Card>
+  <Card title="Stop" icon="stop">
+    A Stop button appears while the assistant is generating a reply. A stopped reply ends with "Request interrupted". A dropped connection shows "Connection lost" instead.
+  </Card>
+  <Card title="Attachments" icon="paperclip">
+    Attach images by picking from the file picker or pasting from the clipboard. Text and code files up to 7 MB each are also supported. Attached images and SVG files open in a fullscreen pan-and-zoom preview when clicked.
+  </Card>
+</CardGroup>
+
+## Reply actions
+
+Every assistant reply has a row of actions beneath it.
+
+- **Copy** — copies the reply as plain text.
+- **Copy as rich text** — copies with formatting preserved, suitable for pasting into Teams, Outlook, or email.
+- **Regenerate** — regenerates the reply; a branch picker lets you switch between the original and any regenerated versions.
+- **Reasoning** — if the model reasoned before answering, the reasoning appears in a collapsible block inside the reply.
+- **Tool calls** — a tool call that has no custom UI shows its input and output when expanded.
+
+<Tip>
+  Add `?assistant=<id>` to the `/assistants` URL to open the page pre-selected on a specific assistant. This is useful for links from other pages, notifications, or onboarding flows.
+</Tip>
+
+## Generative UI
+
+The conversation surface renders more than text. Four built-in client tools are always available without any configuration and give the assistant the ability to produce interactive content inline in the conversation.
+
+<Accordion title="render_form — inline RJSF forms with scaffolder pickers">
+  The `render_form` tool lets the assistant show an inline form instead of asking multiple questions in prose. The form is built from JSON Schema and a `uiSchema`, rendered through Backstage's scaffolder RJSF `<Form>` component. This means owner pickers, entity pickers, repo pickers, and any custom scaffolder field extension your app registers all work inside the form by name. The user fills in the form and submits it; the submitted values become the tool result and the conversation continues.
+
+  With `@backstage/plugin-scaffolder` registered, the pickers populate from the catalog. Without it, the form renders with plain inputs.
+</Accordion>
+
+<Accordion title="download_file — download chips for generated files">
+  The `download_file` tool hands back a generated text file — CSV, JSON, Markdown, code, or SVG — as a download chip in the conversation. Text files have a Copy button beside the chip. SVG files open in a fullscreen pan-and-zoom preview. The turn resumes once the chip is delivered.
+</Accordion>
+
+<Accordion title="read_current_page — reads the page the user is on">
+  The `read_current_page` tool reads the rendered page the user is currently looking at and returns it as an outline: headings, text, buttons, links, tabs, form fields, tables, alerts, any open dialog or drawer, and the lines of a log region around a search term. The portal chrome and the panel itself are skipped. The tool works on any page with no per-plugin code.
+
+  This is most useful from the [floating panel](/frontend/panel), where the assistant sits beside a page and can answer questions like "what does this mean?" or "which button do I press?" about whatever the user is looking at.
+
+  To disable it for your whole app:
+
+  ```yaml
+  app:
+    extensions:
+      - assistant-client-tool:assistants/read-current-page: false
+  ```
+</Accordion>
+
+<Accordion title="describe_portal — describes the installed Backstage instance">
+  The `describe_portal` tool tells the assistant what this Backstage instance offers: the installed plugins, every top-level page with its path, the tabs on a catalog entity's page (Kubernetes, CI/CD, API definitions, and so on), and the contributed client tools — read from the frontend's app tree that every new-frontend-system app builds. This lets the assistant answer "what's in Backstage?" and "where do I find our API docs?" with accurate links from any page, without needing the visualizer plugin.
+</Accordion>
+
+## Mermaid diagrams
+
+Mermaid code blocks in assistant replies render as full diagrams, themed to the Backstage light or dark mode. Each diagram has a fullscreen pan-and-zoom view. The platform instructions include the safe Mermaid syntax for this surface, so the assistant knows which diagram types render correctly.
+
+## Scaffolder templates in chat
+
+An assistant can show a scaffolder template's own parameter form inline in the conversation. The form renders with its `ui:field` and `ui:options` exactly as it does in the scaffolder, including catalog pickers. The user fills it out and submits; the assistant then runs the template with those values. See the backend README for the actions this flow requires.
+
+## Admin editor
+
+Users with the `assistant.manage` permission see a gear icon in the chat sidebar. Clicking it opens the in-app admin editor where you can:
+
+<Steps>
+  <Step title="Create, edit, and delete assistants">
+    Give each assistant a name, description, system prompt, color, and starter suggestions. The platform instructions are shown read-only above the prompt field.
+  </Step>
+  <Step title="Configure tools">
+    Choose which Backstage actions, MCP tools, and browser (client) tools the assistant may offer. Tools not in the allowlist are never sent to the model.
+  </Step>
+  <Step title="Set allowed models">
+    Restrict the assistant to a subset of the configured model pool. Users can only pick from the models in this list.
+  </Step>
+  <Step title="Manage access">
+    Set who can use the assistant: all authenticated users, specific users, or specific groups.
+  </Step>
+  <Step title="Set the default assistant">
+    Use "Make default" to designate one assistant as the default. The default assistant is available to every signed-in user, sorts first in every list, and is what the panel opens until a user picks another. Exactly one assistant is the default at any time.
+  </Step>
+</Steps>

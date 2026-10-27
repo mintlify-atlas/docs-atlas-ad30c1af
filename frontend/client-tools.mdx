@@ -1,0 +1,187 @@
+---
+title: "Client Tools: Run Browser-Side Code as the Signed-In User"
+sidebarTitle: "Client Tools"
+description: "Any Backstage frontend plugin can contribute client tools that run in the user's browser with their own credentials, extending what assistants can do."
+---
+
+Client tools are tools that run entirely in the user's browser, using the user's own credentials. Because they run in the browser rather than on the server, they can reach any system the Backstage frontend already talks to — a Kubernetes cluster, Azure DevOps, GitHub, an internal API behind an OAuth session — without those credentials ever leaving the browser or being stored. Any Backstage frontend plugin or app module can contribute one. The assistants plugin sends the tool's declaration (name, description, input schema, attributes) to the backend on every conversation turn; when the model calls the tool, the browser runs `execute` and returns the result to the model.
+
+## Built-in client tools
+
+Four client tools are always available without any configuration or allowlist entry:
+
+<CardGroup cols={2}>
+  <Card title="render_form" icon="table-list">
+    An inline RJSF form whose submitted values become the tool result. The model composes the form schema; the card renders it through scaffolder's field-extension registry, so owner pickers, entity pickers, repo pickers, and custom scaffolder fields all work.
+  </Card>
+  <Card title="download_file" icon="download">
+    A download chip for a text file the assistant generates — CSV, JSON, Markdown, code, or SVG. Text files have a Copy button; SVG files open in a fullscreen pan-and-zoom preview.
+  </Card>
+  <Card title="read_current_page" icon="file-magnifying-glass">
+    Reads the current rendered page as an outline: headings, text, buttons, links, tabs, form fields, tables, alerts, open dialogs, and log lines. Works on any page with no per-plugin code. Can be disabled per app.
+  </Card>
+  <Card title="describe_portal" icon="sitemap">
+    Describes this Backstage instance's installed plugins, pages, entity tabs, and contributed client tools, read from the app tree. Answers "what is in Backstage?" from any page. Can be disabled per app.
+  </Card>
+</CardGroup>
+
+## Contributing a client tool
+
+Use `AssistantClientToolBlueprint` from the package root to create a client tool extension. The blueprint attaches to the `api:assistants/client-tools` registry automatically; no wiring is needed beyond adding the module to the app's `features`.
+
+```ts
+import { createFrontendModule } from '@backstage/frontend-plugin-api';
+import { microsoftAuthApiRef } from '@backstage/core-plugin-api';
+import { AssistantClientToolBlueprint } from '@drewswiredin/backstage-plugin-assistants';
+
+const recentBuilds = AssistantClientToolBlueprint.make({
+  name: 'recent-builds',
+  params: defineParams =>
+    defineParams<{ project: string; top?: number }, { builds: unknown[] }>({
+      name: 'azure-devops__get_recent_builds',
+      title: 'Recent builds',
+      description: 'The latest Azure DevOps builds of a project.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project: { type: 'string' },
+          top: { type: 'number', description: 'How many; default 10.' },
+        },
+        required: ['project'],
+      },
+      attributes: { readOnly: true },
+      auth: {
+        kind: 'oauth',
+        system: 'Azure DevOps',
+        apiRef: microsoftAuthApiRef,
+        scopes: ['499b84ac-1321-427f-aa17-267ca6975798/user_impersonation'],
+      },
+      execute: async ({ project, top = 10 }, { credential, signal }) => {
+        const res = await fetch(
+          `https://dev.azure.com/my-org/${project}/_apis/build/builds?$top=${top}&api-version=7.1`,
+          { headers: { Authorization: `Bearer ${credential}` }, signal },
+        );
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        const { value } = await res.json();
+        return {
+          builds: value.map((b: any) => ({
+            id: b.id,
+            status: b.status,
+            result: b.result,
+          })),
+        };
+      },
+    }),
+});
+
+export const assistantToolsModule = createFrontendModule({
+  pluginId: 'assistants',
+  extensions: [recentBuilds],
+});
+```
+
+Add `assistantToolsModule` to the app's `features`, then give the assistant the tool by name in the editor's Tools section under "Browser tools".
+
+## Tool contract reference
+
+<Accordion title="name and description">
+  `name` must follow the `<namespace>__<tool>` convention (two underscores), for example `kubernetes__get_workload_status` or `azure-devops__get_recent_builds`. The namespace keeps a plugin's tools apart from Backstage actions and MCP server tools in the model's context.
+
+  `description` is what the model sees when deciding whether to call the tool. Keep it precise and accurate; at most 4000 characters.
+
+  `title` is shown instead of the raw name in approval prompts and Connect controls. Optional but recommended when the `name` is not human-readable.
+</Accordion>
+
+<Accordion title="inputSchema">
+  A JSON Schema object (`type: object`) describing the tool's input. This is what the model sees when it composes a call. Keep it small and focused — at most 8 KB serialized. Return only the fields the model needs; never include secrets or raw API dumps.
+</Accordion>
+
+<Accordion title="attributes">
+  `attributes.readOnly` and `attributes.destructive` mirror the Backstage actions registry attributes. They control when the runtime asks the user for approval before running `execute`.
+
+  - A read-only tool (`readOnly: true`, `destructive: false`) runs without asking unless the backend's `requireApproval` list names it.
+  - A tool that is not read-only or is destructive always asks for approval before every call. There is no "Always allow" for client tools — every gated call asks.
+</Accordion>
+
+<Accordion title="auth">
+  Optional. Declares the credential the tool needs. The runtime acquires it silently first; if no credential is available without user interaction, it shows a "Connect" control in the conversation and acquires interactively on the user's click. No popup is ever opened outside a user gesture. The credential reaches only `execute` and never leaves the browser.
+
+  Two kinds are supported:
+
+  - `oauth` — names a Backstage OAuth `apiRef` (e.g. `microsoftAuthApiRef`, `githubAuthApiRef`) and the scopes to request.
+  - `custom` — supplies an `acquire({ apis, interactive })` function for a plugin that manages its own credentials (e.g. Kubernetes' auth-provider API).
+</Accordion>
+
+<Accordion title="execute">
+  `execute(input, { apis, credential, signal })` runs in the browser when the model calls the tool. It must return a JSON-serializable result. 
+
+  - `apis` is the app's API holder — use it to call any frontend API (`catalogApiRef`, a plugin's own API ref) instead of fetching directly.
+  - `credential` is the acquired credential from `auth`, or `undefined` if no `auth` was declared.
+  - `signal` is an `AbortSignal` that fires when the user stops the turn or the time budget runs out.
+
+  A thrown error, a timeout (`timeoutMs`, default 30 s, at most 120 s), a declined approval, or a dismissed Connect each produce an `{ _error: true, code, message }` result that the model explains to the user.
+</Accordion>
+
+<Accordion title="render">
+  Optional for a tool with `execute` — the call shows its input and output in a generic expand view if no `render` is provided. Required for a tool without `execute`, whose card must supply the result with `addResult`. This is how `render_form` works: the model composes the form schema, `render` draws the form, and the user's submit calls `addResult` to return the result to the model.
+</Accordion>
+
+<Accordion title="isAvailable">
+  Optional. Return `false` (or a `Promise<false>`) to hide the tool in apps where it cannot work — for example, when a required plugin is not installed or a required config key is absent. Resolved once per page load. An unavailable tool is never sent to the model.
+</Accordion>
+
+## Approval behavior
+
+<Warning>
+  A tool that is `destructive: true` or is not `readOnly: true` will always ask the user for approval before `execute` runs, regardless of whether the tool appears in the backend's `requireApproval` list. This is enforced by the browser runtime, not configurable. There is no "Always allow" for client tools — every single call on a write tool asks.
+</Warning>
+
+Read-only tools run silently unless the backend's `requireApproval` config names them. When approval is required, the conversation shows an approval card (Allow or Deny) before the tool executes.
+
+## Allowlist
+
+Client tools must be in an assistant's `allowedTools` to be offered to that assistant's model. The four built-in tools (`render_form`, `download_file`, `read_current_page`, `describe_portal`) are always present regardless of the allowlist. For contributed tools, add them by name in the admin editor under the assistant's Tools section.
+
+The browser sends the declarations of all available client tools on every `/chat` request. The backend offers only the ones that are in the assistant's allowlist to the model.
+
+## `clientToolsApiRef`
+
+The `clientToolsApiRef` is the registry that holds all contributed client tools. Every `AssistantClientToolBlueprint` extension attaches to it automatically; every conversation surface (the chat page and the panel) reads from it. There is one registry per app, so a tool registered once is available wherever a conversation renders.
+
+```ts
+import { clientToolsApiRef } from '@drewswiredin/backstage-plugin-assistants';
+
+// Read the registered tools from a component or API:
+const { tools } = useApi(clientToolsApiRef);
+```
+
+## `usePanelControl`
+
+`usePanelControl` is a React context hook that lets any page component open the panel programmatically — on an existing thread, on a specific assistant, or with a first message to send immediately.
+
+```ts
+import { usePanelControl } from '@drewswiredin/backstage-plugin-assistants';
+
+const panelControl = usePanelControl();
+
+// Open the panel and continue a thread:
+panelControl?.open({ threadId: 'some-thread-id' });
+
+// Open the panel on a specific assistant with a prompt:
+panelControl?.open({
+  assistantId: 'my-assistant-id',
+  prompt: 'Summarize the recent deployments.',
+});
+```
+
+`usePanelControl()` returns `undefined` in an app where `assistantsPanelModule` is not installed, so always guard the call with `?.`.
+
+<Note>
+  The `clientToolDataRef` extension data ref is the carrier that moves a tool definition from an `AssistantClientToolBlueprint` extension through the Backstage frontend extension system into the `api:assistants/client-tools` registry. If you are building a custom integration that reads extension data directly, import it from `@drewswiredin/backstage-plugin-assistants`:
+
+  ```ts
+  import { clientToolDataRef } from '@drewswiredin/backstage-plugin-assistants';
+  ```
+
+  Normal contributors use `AssistantClientToolBlueprint.make()` and never interact with `clientToolDataRef` directly.
+</Note>

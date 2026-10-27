@@ -1,0 +1,116 @@
+---
+title: "Your First Conversation with Backstage Assistants"
+sidebarTitle: "First Run"
+description: "What happens on first start, how the default assistant is seeded, and how to create and manage assistants in the in-app editor."
+---
+
+The first time the Backstage Assistants backend starts against a fresh database, it does something immediately useful: it seeds one assistant, makes it the default, and opens it to every signed-in user. You do not need to configure anything in the editor before you can have a conversation. This page explains what that seeded assistant looks like, how the default assistant concept works, how to navigate the chat surfaces, and how to create and manage assistants using the in-app editor.
+
+## What happens on first start
+
+When the backend initializes against an empty database, it automatically seeds one assistant configured with the three built-in read tools (`search-catalog`, `search-techdocs`, and `read-techdocs`, when `builtinActions: true` is set). This assistant is immediately designated as the default.
+
+<Note>
+  A healthy start writes this line to the backend log:
+
+  ```
+  AI Assistants backend plugin initialized
+  ```
+
+  The log entry also includes the total model count, the configured default model ID, whether `builtinActions` is enabled, and the total number of assistants in the database. If this message does not appear, check for startup errors — the most common cause is a missing or misconfigured `assistants.defaultModel` or provider.
+</Note>
+
+Tables are created by migrations at startup; there is nothing to run manually. On an upgrade from a version that predates the default assistant designation, the backend promotes the oldest assistant that is open to every signed-in user, or logs a `no default assistant` warning if none qualifies — in that case, open the editor and use **Make default** to designate one.
+
+## The default assistant
+
+Exactly one assistant is the default at any time. It is the assistant every signed-in user receives when they first open `/assistants` or the side panel — they see it listed first, and the panel opens it without any further configuration. The default assistant:
+
+- Is always accessible to every signed-in user, regardless of per-assistant access settings.
+- Cannot be deleted or restricted until another assistant is made the default.
+- Is marked **Default** in the editor's assistant list.
+
+When a user picks a different assistant in the panel, that choice is remembered in their browser and starts a fresh conversation. If the picked assistant is later removed, the panel falls back to the default automatically.
+
+## Chat surfaces
+
+Backstage Assistants provides three surfaces for starting and continuing conversations.
+
+**Chat page at `/assistants`**
+
+The main chat page lists your conversations per assistant in the left sidebar. Each conversation row has a menu to rename, pin, or delete it; pinned conversations sort to the top. Opening an assistant shows a welcome screen with its description and starter suggestion chips — clicking a chip sends that message immediately.
+
+You can deep-link into specific views:
+
+- `?assistant=<id>` — opens the chat page on a particular assistant.
+- `/assistants/threads/<id>` — opens one specific conversation directly.
+
+**Side panel**
+
+If `assistantsPanelModule` is installed, a floating button appears in the lower right of every page. The panel opens beside the page rather than over it — the page content makes room. From the panel you can pick a different assistant from the assistant name in the header, choose a model and reasoning effort in the composer, browse earlier conversations via the history button, or move a conversation to the full chat page with **Open in Assistants**.
+
+<Tip>
+  Press `Ctrl+/` (`⌘/` on macOS) to toggle the side panel from any page when `assistantsPanelModule` is installed. A click anywhere on the page or `Esc` collapses the panel to a strip at the right edge, preserving the conversation. The strip glows while the assistant is working and remains lit while a reply is unread.
+</Tip>
+
+**Homepage composer**
+
+If `assistantsHomeModule` is installed alongside `@backstage/plugin-home`, an `AssistantComposer` widget can be placed on the home page grid. Sending a message from the composer creates a conversation and hands it to the side panel, which opens and continues it. In an app without the panel the conversation opens on the `/assistants` page instead.
+
+## The in-app editor
+
+The editor is where all per-assistant configuration lives — prompts, starter suggestions, models, tools, and access. It is never `app-config.yaml`. Users with the `assistant.manage` permission see a **gear icon** in the chat sidebar that opens the editor.
+
+<Note>
+  Under create-app's default allow-all permission policy, every signed-in user holds both `assistant.use` and `assistant.manage`. This means every user can chat and every user can open the editor on a fresh installation. Gating takes effect only once you install a custom `PermissionPolicy` that evaluates these permissions explicitly. See the backend documentation on [granting `assistant.use` and `assistant.manage`](https://github.com/drewswiredin/backstage-assistants/tree/main/packages/assistants-backend#grant-assistantuse-and-assistantmanage) for how to restrict access by group membership or with the RBAC plugin.
+</Note>
+
+### What you can configure per assistant
+
+<Accordion title="Title and description">
+  The title appears in the assistant list, the panel header, and the nav icon's tooltip. The description is shown on the welcome screen and in the assistant detail modal.
+</Accordion>
+
+<Accordion title="Prompt">
+  The system prompt for the assistant. The backend prepends a fixed set of platform instructions to every turn (covering Markdown and Mermaid rendering, formatting, and when to use built-in tools); your prompt only needs to describe the assistant's role. The editor displays those platform instructions read-only below the prompt field.
+</Accordion>
+
+<Accordion title="Starter suggestions">
+  Short chips shown on the welcome screen of an empty conversation. Each suggestion has a label (shown on the chip) and a prompt text (sent when clicked).
+</Accordion>
+
+<Accordion title="Models">
+  An optional allowlist of `provider:model` IDs from the global pool. Leave it empty to offer every configured model. When set, the per-conversation model picker is limited to this list. You can also set a per-assistant default model that overrides the platform default for new conversations.
+</Accordion>
+
+<Accordion title="Tools">
+  The unified tool allowlist: bare Backstage action IDs (e.g. `search-catalog`, `get-catalog-entity`), namespaced MCP tools (e.g. `github__create_pull_request`), and namespaced browser client tools. The editor shows every assignable item — Backstage actions available to the admin, each configured MCP server's reachability and tool list, and contributed client tools — so you can pick from them directly. An assistant only offers the intersection of its allowlist and the tools the calling user may see and run.
+</Accordion>
+
+<Accordion title="Access">
+  Who may converse with this assistant: any signed-in user, specific users by entity ref (e.g. `user:default/jane`), or groups (e.g. `group:default/platform-team`). The default assistant is always open to all signed-in users. Access policies are enforced server-side and never reach the browser.
+</Accordion>
+
+### Creating, editing, and deleting assistants
+
+From the editor you can:
+
+- **Create** a new assistant with its own prompt, tools, and access. Changes are live on save.
+- **Edit** any existing assistant. Updates are visible to users immediately.
+- **Make default** to designate an assistant as the default; this opens its access to every signed-in user automatically.
+- **Delete** any non-default assistant. Its users' existing conversation history is retained in the database but no longer shown in the UI.
+
+### Seed-once behavior
+
+The assistant seeded on first start is created exactly once and never resurrected. If you edit it, the edited version persists. If you delete it, it is gone. The backend tracks a seed-once marker in the `assistants_meta` table so it never re-seeds after restarts or upgrades — your changes are always respected.
+
+## Permissions reference
+
+Two Backstage permissions gate the assistant surfaces. Both are defined in `@drewswiredin/backstage-plugin-assistants-common` and enforced server-side (403 when denied) as well as client-side.
+
+| Permission | `name` | `action` | Gates |
+| --- | --- | --- | --- |
+| `assistantUsePermission` | `assistant.use` | `read` | The chat page, the panel, the `/chat` stream endpoint, and thread endpoints |
+| `assistantManagePermission` | `assistant.manage` | `update` | The in-app editor and the `/manage/*` admin API routes |
+
+Both permissions are registered with `coreServices.permissionsRegistry` and show up in permission UIs that discover permissions by endpoint, such as the RBAC role editor. For a full example of a custom `PermissionPolicy` that gates these by group membership, see the [backend README](https://github.com/drewswiredin/backstage-assistants/tree/main/packages/assistants-backend#grant-assistantuse-and-assistantmanage).

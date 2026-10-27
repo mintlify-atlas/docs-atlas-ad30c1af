@@ -1,0 +1,93 @@
+---
+title: "Semantic Search Module for Backstage Assistants"
+sidebarTitle: "Overview"
+description: "The semantic search module indexes everything Backstage search crawls into pgvector, enabling meaning-based, fuzzy, and keyword retrieval for AI assistants."
+---
+
+The `@drewswiredin/backstage-plugin-assistants-backend-module-semantic-search` module gives every AI assistant in your Backstage portal a `search-knowledge` tool that finds documentation, catalog entities, and any other content your Backstage search already indexes — by meaning, near spelling, and exact words. A query like "fix errored-out messages" surfaces the _Dead-letter handling › Replaying dead-lettered messages_ runbook; "Pilon deployment" finds the _Pylon Gateway › Deployment runbook_ despite the misspelling; and "dlq-replay" finds the page that names the job.
+
+## What It Indexes
+
+The module copies everything Backstage search indexes — TechDocs, the software catalog, Confluence, or any other source a collator brings in. It reads no source directly. Each time a search collator finishes a run, the module copies that run's documents into its own Postgres tables, so the knowledge index follows your existing search schedule exactly. A rate-limited source such as Confluence is read once, by search, and the module picks up the result.
+
+## Permissions
+
+Catalog and TechDocs results are filtered to entities the requesting user can read in the catalog. Results from other sources (Confluence, wikis, custom collators) are visible to every assistant user, consistent with how Backstage search itself handles those sources.
+
+## How It Works
+
+Every question sent to `search-knowledge` is resolved with four parallel retrieval lists that are then merged:
+
+| List | Matches | Postgres mechanism |
+|---|---|---|
+| Semantic | Meaning, per phrasing | pgvector cosine distance (HNSW index) |
+| Keyword | Any query word, ranked by match density | `tsvector` / `websearch_to_tsquery` |
+| Rare word | Query words found in ≤ 3 chunks | `tsvector` / `websearch_to_tsquery` |
+| Fuzzy | Near spellings of words absent from the index | `pg_trgm` word similarity |
+
+Reciprocal rank fusion merges the four lists with one vote per method — the semantic lists share a single vote, so passing extra phrasings broadens recall without outvoting an exact match. Each chunk's fused score is then multiplied by a configurable per-type weight. The rare-word list plays a specific role: it prevents a name or acronym mentioned just once in a paragraph from being buried by sections that are only thematically close to the question.
+
+## Requirements
+
+- Postgres 13 or later with the `vector` ([pgvector](https://github.com/pgvector/pgvector)) and `pg_trgm` extensions enabled in the assistants plugin's database.
+- Backstage search (`@backstage/plugin-search-backend`) running in the same backend, with collators for the sources you want to index.
+- An embedding model from an `openai`, `azure`, or `openai-compatible` provider declared in `assistants.providers` (for example OpenAI `text-embedding-3-small`, an Azure embedding deployment, or Ollama `nomic-embed-text`).
+
+## Enabling the Postgres Extensions
+
+The module attempts to enable both extensions automatically when its database role has permission. `pg_trgm` is a trusted extension and can usually be enabled by the role that owns the database. `vector` requires a database administrator. Ask one to run the following SQL in the assistants plugin's database (named `backstage_plugin_assistants` by default):
+
+```sql
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+```
+
+| Provider | What to do |
+|---|---|
+| AWS RDS / Aurora | Run the SQL as the master user |
+| Google Cloud SQL / AlloyDB | Run the SQL as a `cloudsqlsuperuser` user |
+| Azure Database for PostgreSQL Flexible | Add `VECTOR` and `PG_TRGM` to the `azure.extensions` server parameter, then run the SQL |
+| Self-hosted | Install pgvector (e.g. `postgresql-16-pgvector`), then run the SQL as a superuser |
+
+If either extension is missing at startup, the module logs an error with the exact `CREATE EXTENSION` statement needed and disables itself — assistants keep their other tools in the meantime. Restart the backend once the administrator has enabled the extensions.
+
+## Install
+
+<Steps>
+  <Step title="Add the package">
+    ```bash
+    yarn --cwd packages/backend add @drewswiredin/backstage-plugin-assistants-backend-module-semantic-search
+    ```
+  </Step>
+  <Step title="Register the module in your backend">
+    ```ts
+    // packages/backend/src/index.ts
+    backend.add(import('@drewswiredin/backstage-plugin-assistants-backend'));
+    backend.add(import('@backstage/plugin-search-backend'));
+    backend.add(
+      import(
+        '@drewswiredin/backstage-plugin-assistants-backend-module-semantic-search'
+      ),
+    );
+    ```
+
+    The single `backend.add` call installs two modules at once: the knowledge index and the `search-knowledge` tool under the `assistants` plugin, plus a search decorator under the `search` plugin that copies each search run's documents into the index. Without the search plugin present, the module logs a warning at startup and the index stays empty.
+  </Step>
+</Steps>
+
+<Note>
+  To install the two modules separately, import them by name from the same package:
+
+  - `assistantsModuleSemanticSearch` — the knowledge index and `search-knowledge` tool under `assistants`
+  - `searchModuleAssistantsKnowledge` — the search decorator under `search`
+
+  Both named exports are available from `@drewswiredin/backstage-plugin-assistants-backend-module-semantic-search`.
+</Note>
+
+## Give the Assistant the Tool
+
+Open the assistant editor in your Backstage portal and add `search-knowledge` to the assistant's tools list. It pairs well with `read-techdocs` (available via `builtinActions: true`), which fetches the full TechDocs page behind a search result. Results from other sources carry a direct link.
+
+<Warning>
+  Changing `embeddingModel` in your configuration empties the entire knowledge index. Each document type refills on its next scheduled search run. Plan model changes for a time when an index rebuild is acceptable, or manually trigger each collator's task immediately after the change.
+</Warning>

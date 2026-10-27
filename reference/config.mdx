@@ -1,0 +1,281 @@
+---
+title: "Configuration Reference for Backstage Assistants"
+sidebarTitle: "Config"
+description: "Complete reference for all app-config.yaml keys under the assistants block, including providers, MCP servers, approval gate, and semantic search."
+---
+
+All plugin configuration lives under the `assistants` key in `app-config.yaml`. Semantic search configuration is nested under `assistants.semanticSearch` and belongs to the optional semantic search module. No per-assistant settings (prompt, access policy, tools, or models) live in config — those are managed at runtime through the in-app editor and stored in the plugin database.
+
+## Complete example
+
+The snippet below shows all major sections populated. Only `defaultModel` and at least one provider with one model are required to start the backend.
+
+```yaml app-config.yaml
+assistants:
+  defaultModel: openrouter:anthropic/claude-sonnet-5
+  maxSteps: 10
+  builtinActions: true
+  toolResultMaxChars: 30000
+  requireApproval:
+    - execute-template
+  providers:
+    openrouter:
+      type: openai-compatible
+      apiKey: ${OPENROUTER_API_KEY}
+      baseUrl: https://openrouter.ai/api/v1
+      models:
+        - name: anthropic/claude-sonnet-5
+          contextWindow: 1000000
+          reasoning: true
+  mcp:
+    connectTimeoutMs: 8000
+    servers:
+      github:
+        transport: http
+        url: https://api.githubcopilot.com/mcp/
+        headers:
+          Authorization: Bearer ${GITHUB_MCP_TOKEN}
+        requireApproval: [create_pull_request]
+  semanticSearch:
+    embeddingModel: openai:text-embedding-3-small
+    maxResults: 8
+    types:
+      software-catalog: { weight: 1.5 }
+      techdocs: { weight: 1.2 }
+```
+
+---
+
+## Core settings
+
+<Accordion title="Core settings">
+
+| Key | Default | Description |
+|---|---|---|
+| `defaultModel` | required | Initial `<providerId>:<model>` selection; must match a model in a configured provider. |
+| `maxSteps` | `10` | Maximum tool-call steps per turn. |
+| `builtinActions` | `false` | Register the built-in `search-catalog`, `search-techdocs`, and `read-techdocs` tools. |
+| `toolResultMaxChars` | `30000` | Maximum characters of a single tool result, using head+tail truncation. Set `0` to disable truncation. |
+| `requireApproval` | `[]` | Action ids, MCP tool names, and client tool names that require an explicit **Allow / Deny** in the conversation before the tool runs. |
+| `requestBodyLimit` | `10mb` | JSON body size limit for every plugin request; sized to accommodate `/chat` attachments. |
+
+<Note>
+`requireApproval` is a config floor, not a per-assistant field. The effective gated set for an assistant is this list intersected with its `allowedTools`, so a gated tool an assistant is not given is never hit. The gate cannot be weakened per-assistant.
+</Note>
+
+</Accordion>
+
+---
+
+## Provider configuration
+
+<Accordion title="Provider config (providers.<id>)">
+
+Each entry under `providers` is keyed by a provider id you choose (e.g. `openrouter`, `openai`, `azure`). Model ids in the plugin are always `<providerId>:<model>`.
+
+| Key | Default | Description |
+|---|---|---|
+| `providers.<id>.type` | required | `openai` \| `anthropic` \| `azure` \| `openai-compatible`, or a type registered by a backend module. |
+| `providers.<id>.apiKey` | required for built-in types | Provider API key (secret; redacted in logs and API responses). |
+| `providers.<id>.baseUrl` | — | Base URL override (required for `openai-compatible` and Azure AI Foundry; optional for others). |
+| `providers.<id>.options` | — | Untyped passthrough object spread into the `@ai-sdk/*` factory (e.g. Azure `useDeploymentBasedUrls`). Not schema-validated; keep secrets in `apiKey` instead. |
+| `providers.<id>.models` | required | Array of model objects. A plain string list is rejected at startup. |
+
+Multiple providers can be configured simultaneously; their `models` entries form one unified pool.
+
+```yaml
+# Under assistants.providers:
+openrouter:
+  type: openai-compatible
+  apiKey: ${OPENROUTER_API_KEY}
+  baseUrl: https://openrouter.ai/api/v1
+  models:
+    - name: anthropic/claude-sonnet-5
+      contextWindow: 1000000
+      reasoning: true
+    - name: openai/gpt-5.5
+      contextWindow: 400000
+
+anthropic:
+  type: anthropic
+  apiKey: ${ANTHROPIC_API_KEY}
+  models:
+    - name: claude-opus-5
+      contextWindow: 1000000
+      reasoning: true
+```
+
+</Accordion>
+
+---
+
+## Per-model options
+
+<Accordion title="Per-model options (providers.<id>.models[])">
+
+Each entry in the `models` array is an object. A plain string list fails validation at startup.
+
+| Key | Default | Description |
+|---|---|---|
+| `name` | required | The model name as the provider knows it (e.g. `claude-sonnet-5`, `anthropic/claude-sonnet-5` for OpenRouter). |
+| `contextWindow` | — | Max input tokens; drives the context gauge in the chat composer. Omit to leave the limit unknown. |
+| `reasoning` | `false` | `true` if the model reasons; adds the reasoning effort picker in the chat UI. Set only on models that accept it. |
+| `maxOutputTokens` | — | Output-token ceiling per turn; must be `> 0`. Only needed when the provider misjudges an unrecognized model id (symptom: tool calls run but no text reply appears). |
+
+The four reasoning effort tiers are fixed (`low`, `medium`, `high`, `max`) and translated to the provider's own API at request time:
+
+| Provider type | Sent as |
+|---|---|
+| `openai`, `openai-compatible`, `azure` | `reasoningEffort: <tier>` (`max` sent as `xhigh`) |
+| `anthropic` | `thinking: { type: adaptive }` + `output_config.effort: <tier>` |
+
+```yaml
+# Under assistants.providers.openai.models:
+models:
+  - name: gpt-5.5
+    contextWindow: 400000
+    reasoning: true
+  - name: my-small-deployment
+    maxOutputTokens: 32000
+    # no reasoning flag: effort picker is hidden for this model
+```
+
+</Accordion>
+
+---
+
+## MCP global settings
+
+<Accordion title="MCP global settings (mcp)">
+
+| Key | Default | Description |
+|---|---|---|
+| `mcp.connectTimeoutMs` | `8000` | Global ceiling in milliseconds for connecting to an MCP server and listing its tools. Must be `> 0`. Slow-starting `stdio` servers (e.g. launched via `uvx` or `npx`) often need `15000` to `20000`. |
+| `mcp.elicitationTimeoutMs` | `300000` | How long (ms) an MCP server's mid-call question waits for the user before being cancelled. Must be `> 0`. |
+| `mcp.oauth.encryptionKey` | required when `provider: oauth` is used | 32 bytes, base64-encoded; encrypts stored OAuth tokens in the database. Secret. Generate with `openssl rand -base64 32`. |
+| `mcp.oauth.previousEncryptionKeys` | — | Earlier keys, still accepted after a rotation. Stored tokens migrate to the new key as they are used. Secret. |
+
+</Accordion>
+
+---
+
+## MCP server configuration
+
+<Accordion title="MCP server config (mcp.servers.<id>)">
+
+Each entry under `mcp.servers` is keyed by a server id you choose (e.g. `github`, `jira`, `filesystem`). MCP tool names are namespaced as `<serverId>__<toolName>` throughout the plugin.
+
+| Key | Default | Description |
+|---|---|---|
+| `transport` | `http` | `http` (Streamable HTTP) \| `sse` \| `stdio`. |
+| `url` | required for `http`/`sse` | The server's endpoint URL. |
+| `headers` | — | Headers sent on every request (`http`/`sse`); values are secret and redacted. |
+| `command` | required for `stdio` | Executable to spawn. |
+| `args` | — | Arguments for `command` (`stdio` only). |
+| `env` | — | Extra environment variables for the child process, merged over a safe default (`stdio` only); values are secret. |
+| `cwd` | — | Working directory for the child process (`stdio` only). |
+| `connectTimeoutMs` | the global value | Per-server connect/list-tools ceiling in ms; overrides `mcp.connectTimeoutMs` for this server. Must be `> 0`. |
+| `requireApproval` | `[]` | Tool names of this server that require an explicit **Allow / Deny** before each run. Listed names are namespaced automatically. |
+| `userCredentials` | — | Connect per user: `{ provider, host?, scopes?, title?, header?, scheme?, env? }`. With `provider: oauth`, `{ scopes?, title?, clientId?, clientSecret?, clientMetadataDocument? }`. See below. |
+| `allowStandingApproval` | `false` | Offer **Always allow** for a per-user server's gated tools. By default, per-user server calls require individual approval every time. |
+| `argumentRules` | — | `<tool>.<argument>: { pattern?, equals? }` — enforced before the approval prompt and again before the call runs. |
+| `approvalPreview` | — | `<tool>: { type: file \| files, fields, base? }` — makes the approval card show a diff instead of raw JSON for write operations. |
+| `elicitation` | per-user: `true`; shared: `false` | Allow the server to ask the user for input mid-call (MCP elicitation). |
+
+**Example: shared HTTP server with a static token**
+
+```yaml
+# Under assistants.mcp.servers:
+github:
+  transport: http
+  url: https://api.githubcopilot.com/mcp/
+  headers:
+    Authorization: Bearer ${GITHUB_MCP_TOKEN}
+  requireApproval: [create_pull_request]
+```
+
+**Example: per-user HTTP server (user's own GitHub token)**
+
+```yaml
+github:
+  transport: http
+  url: https://api.githubcopilot.com/mcp/
+  headers:
+    X-MCP-Toolsets: repos,pull_requests
+  userCredentials:
+    provider: github
+    host: github.com
+  requireApproval: [create_branch, create_pull_request]
+  allowStandingApproval: true
+```
+
+**Example: stdio server (local process)**
+
+```yaml
+filesystem:
+  transport: stdio
+  command: npx
+  args: ['-y', '@modelcontextprotocol/server-filesystem', '/data']
+  env:
+    SOME_TOKEN: ${SOME_TOKEN}
+  connectTimeoutMs: 20000
+```
+
+**Example: server running its own OAuth**
+
+```yaml
+atlassian:
+  transport: http
+  url: https://mcp.atlassian.com/v1/mcp/authv2
+  userCredentials:
+    provider: oauth
+    title: Atlassian
+    scopes: [read:me, offline_access, read:jira-work, search:confluence]
+  requireApproval: [createJiraIssue, editJiraIssue]
+```
+
+<Warning>
+A static `headers` entry for the token header (or an `env` entry for stdio) cannot coexist with `userCredentials` on the same server — the backend rejects the config at startup.
+</Warning>
+
+</Accordion>
+
+---
+
+## Semantic search configuration
+
+<Accordion title="Semantic search (semanticSearch)">
+
+These keys belong to the optional `@drewswiredin/backstage-plugin-assistants-backend-module-semantic-search` module. They sit under `assistants.semanticSearch`. The module requires the `vector` (pgvector) and `pg_trgm` Postgres extensions and an embedding model from a configured provider.
+
+| Key | Default | Description |
+|---|---|---|
+| `semanticSearch.embeddingModel` | required | `<providerId>:<model>` from `assistants.providers`; must be an embedding model (e.g. `openai:text-embedding-3-small`). Changing this key empties the index; each type refills on its next search run. |
+| `semanticSearch.maxResults` | `8` | Results returned per answer unless the model requests a specific number (capped at 20). |
+| `semanticSearch.types.<type>.weight` | `1` | Multiplies this type's fused score. `0` never returns results from this type. |
+| `semanticSearch.types.<type>.default` | `true` | When `false` the type is opt-in: the model must explicitly pass `types: ['<type>']` to search it; the tool description says so. |
+| `semanticSearch.types.<type>.maxResults` | — | At most this many results from this type while other types fill the remaining slots. |
+| `semanticSearch.types.<type>.enabled` | `true` | When `false`, stops copying this source and deletes its chunks on its next search run. |
+| `semanticSearch.types.<type>.description` | — | What this source holds; shown to the model in the `search-knowledge` tool description. |
+
+Type keys match the document type names Backstage search uses: `software-catalog`, `techdocs`, or a custom collator's type name. Sources not listed are indexed with `weight: 1` and `default: true`.
+
+```yaml
+assistants:
+  semanticSearch:
+    embeddingModel: openai:text-embedding-3-small
+    maxResults: 8
+    types:
+      software-catalog:
+        weight: 1.5
+      techdocs:
+        weight: 1.2
+      confluence:
+        weight: 1.0
+      jira:
+        weight: 0.5
+        maxResults: 2
+        description: ticket history, decisions and status
+```
+
+</Accordion>

@@ -1,0 +1,131 @@
+---
+title: "Assistants, Tools, and Actions: How They Fit Together"
+sidebarTitle: "Assistants & Tools"
+description: "Understand the domain model of Backstage Assistants: how assistants, tools, actions, MCP servers, and client tools relate to each other."
+---
+
+Backstage Assistants is built around a small set of domain objects that each play a distinct role. An **Assistant** is the persona a user talks to. **Actions** are capabilities registered in Backstage. **Tools** are what the AI model actually calls. Understanding how these objects relate — and how the allowlist, authorization gates, and client tools interact — will help you configure assistants precisely and reason about what any given model turn can and cannot do.
+
+<Note>
+**Terminology matters.** Use **Assistant** — never Agent or Bot. Use **Action** when talking about the Backstage registry layer (registration, config, schemas). Use **Tool** when talking about the model-facing layer (what gets handed to `streamText`). The distinction maps cleanly onto their separate lifecycles: actions are registered in-process; tools are assembled per turn.
+</Note>
+
+## Key domain objects
+
+<CardGroup cols={2}>
+  <Card title="Assistant" icon="robot">
+    A configured persona: its system prompt, access policy, tool allowlist, allowed models, and UI options. Defined in the in-app editor and stored in the plugin database. Not a config concept — there is no profiles config key.
+  </Card>
+  <Card title="Action" icon="bolt">
+    An entry in the Backstage Actions registry — a JSON Schema plus a handler. Registered in-process via `actionsRegistryServiceRef`. The tool primitive at the Backstage layer, consumed via `actions.list` and `actions.invoke`.
+  </Card>
+  <Card title="Tool" icon="wrench">
+    An AI SDK `tool()` handed to the model loop. Produced by adapting an Action that passes both gates, an MCP server tool, or a client tool declaration from the browser. "Tool" is the model-facing word; "Action" is the Backstage-registry word for the same underlying capability.
+  </Card>
+  <Card title="Allowlist" icon="list-check">
+    The assistant's unified `allowedTools: string[]`. Each entry is a bare Backstage action id, a namespaced `<serverId>__<tool>` for an MCP tool, or a `<namespace>__<tool>` for a client tool. Empty means no Backstage, MCP, or contributed client tools are offered.
+  </Card>
+</CardGroup>
+
+## The allowlist in detail
+
+The allowlist (`allowedTools`) is an explicit, no-wildcard list stored on the assistant definition. Every entry must be one of these three forms:
+
+| Entry form | Example | Source |
+|---|---|---|
+| Bare action id | `search-catalog` | Backstage Actions registry |
+| `<serverId>__<tool>` | `github__create_pull_request` | MCP server tool |
+| `<namespace>__<tool>` | `kubernetes__get_workload_status` | Client tool |
+
+An empty allowlist is not "all tools" — it means **no** Backstage, MCP, or contributed client tools are offered. The four built-in client tools (`render_form`, `download_file`, `read_current_page`, `describe_portal`) are always present regardless of the allowlist.
+
+## Two gates for Backstage action tools
+
+Backstage action tools pass through two independent authorization checks before they reach the model:
+
+<Steps>
+  <Step title="The allowlist gate">
+    The action id must appear in the assistant's `allowedTools`. If it is not listed, the action is never offered, regardless of what the user can see.
+  </Step>
+  <Step title="The user authorization gate">
+    The calling user must have access to that action. This is enforced by Backstage at `actions.list({ credentials })` (coarse, per-action visibility) and again at `actions.invoke` (fine-grained, per-resource ownership). Every Backstage action runs as the calling user, so Backstage's own permission system applies.
+  </Step>
+</Steps>
+
+**Effective tools** for a given request are the intersection of: the assistant's allowlist, the actions the calling user can see, and the client tools declared by the browser for this request.
+
+## MCP tools and the user gate
+
+MCP tools in `allowedTools` bypass the user authorization gate. They run under the server's configured shared credential — one identity for every user. Gate access with the assistant's access policy, or connect the server per user.
+
+A **per-user MCP server** (`userCredentials` in config) is the exception: each call carries the signed-in user's own token, so the remote system limits the call to what that user may do and attributes writes to them. The token is never stored; it travels in the `x-assistants-credentials` request header.
+
+## Client tools
+
+Client tools run in the user's browser with the user's own credentials. Any frontend plugin or module contributes one through `AssistantClientToolBlueprint`. The browser sends each tool's declaration — name, description, JSON Schema, and attributes — on every `/chat` request. The backend offers it to the model with no `execute`, so the model loop yields to the browser, which runs the tool and returns the result.
+
+Client tools are named `<namespace>__<tool>` (for example, `azure-devops__get_recent_builds`). The namespace keeps a plugin's tools separate from Backstage actions and MCP server tools.
+
+<Accordion title="Client tool attributes">
+  Each client tool declares `attributes` that mirror Backstage action attributes:
+
+  - `readOnly: true` — the tool makes no mutations.
+  - `destructive: true` — the tool performs a destructive operation.
+
+  A tool that is **not** read-only, or that is destructive, requires user approval on every call. There is no "always allow" for client tools — every gated call asks.
+</Accordion>
+
+## Built-in tools
+
+These tools are registered by the plugin and require no per-tool configuration:
+
+<CardGroup cols={2}>
+  <Card title="Built-in Backstage actions" icon="magnifying-glass">
+    Registered when `assistants.builtinActions: true`:
+    - `search-catalog` — searches the catalog via the search backend
+    - `search-techdocs` — searches TechDocs via the search backend
+    - `read-techdocs` — reads a TechDocs page as the caller
+
+    The semantic search module (`-backend-module-semantic-search`) adds `search-knowledge`.
+  </Card>
+  <Card title="Always-on client tools" icon="browser">
+    Always present regardless of the allowlist:
+    - `render_form` — renders an inline RJSF form for structured input
+    - `download_file` — delivers a generated text file as a download chip
+    - `read_current_page` — returns the current page as a rendered outline
+    - `describe_portal` — describes the installed plugins, pages, and entity tabs
+  </Card>
+</CardGroup>
+
+## The default assistant
+
+Exactly one assistant is the **default assistant**: the one every signed-in user gets, designated in the editor with "Make default". It is listed first in `/status` and is the assistant the Panel opens until the user picks another. Designating an assistant as the default opens its access to every signed-in user. There can never be two default assistants — the designation is a single key in `assistants_meta`.
+
+## Model id format
+
+A model id is a `<providerId>:<model>` string, where `providerId` is the key you give the provider under `assistants.providers`. The model segment may contain slashes.
+
+```text
+openrouter:anthropic/claude-sonnet-4
+myAzure:gpt-4o
+anthropic:claude-opus-5
+```
+
+This format is used everywhere a model is named: `defaultModel`, the per-assistant model allowlist, and the model picker in the UI.
+
+## Conversation vs. Thread
+
+A **Conversation** is the user-facing term for a single chat session with one assistant — its ordered messages, persisted in the plugin database, owned by one user. A **Thread** is assistant-ui's internal name for the same object. Use "Thread" only when referring to assistant-ui runtime APIs (thread-list runtime, `ThreadPrimitive`). Use "Conversation" in all user-facing and documentation contexts.
+
+## Putting it all together
+
+For any given model turn, the backend:
+
+1. Reads the assistant definition from the database.
+2. Intersects `allowedTools` with `actions.list(credentials)` to get the Backstage action tools for this user.
+3. Adds MCP tools from the allowlist directly (shared credential, or the user's own token for per-user servers).
+4. Adds client tools declared by the browser that are in the allowlist.
+5. Applies the approval gate — tools in `requireApproval` are paused until the user allows or denies them.
+6. Hands the assembled tool set to the AI SDK loop.
+
+The calling user's identity is never sent to the model provider.

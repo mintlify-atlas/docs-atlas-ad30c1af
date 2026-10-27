@@ -1,0 +1,116 @@
+---
+title: "Floating Panel: AI Chat Beside Any Backstage Page"
+sidebarTitle: "Panel"
+description: "The assistantsPanelModule adds a floating side panel to every page in your Backstage app, with page-reading, history, and full keyboard controls."
+---
+
+The Backstage Assistants panel puts a floating button in the lower-right corner of every page in your app. Clicking it — or pressing `Ctrl+/` — opens a side panel with a full conversation surface right beside the page you are on, without navigating away. The page content shrinks to make room for the panel rather than being covered by it, which means you can read a runbook while the assistant explains it, follow step-by-step instructions the assistant gives you, or copy values the assistant produces into a form you have open. "Open in Assistants" at the top of the panel moves the conversation to the full `/assistants` page when you need more space; nothing is copied.
+
+## Install
+
+The panel wraps the app layout, which is the `app` plugin's own extension point. It ships as a module for the `app` plugin so it can sit at the root of the component tree, outside all page components. Add it to your app's `features` alongside the main plugin:
+
+```ts
+import assistantsPlugin, {
+  assistantsPanelModule,
+} from '@drewswiredin/backstage-plugin-assistants/alpha';
+
+export default createApp({
+  features: [assistantsPlugin, assistantsPanelModule],
+});
+```
+
+## Panel states
+
+The panel has three states that you move between with keyboard shortcuts or by interacting with the page.
+
+<CardGroup cols={3}>
+  <Card title="Closed" icon="circle">
+    The floating button is visible in the lower-right corner. No panel column is shown and the page layout is unchanged.
+  </Card>
+  <Card title="Open" icon="panel-right">
+    The panel slides out beside the page. The page column shrinks to make room. The floating button disappears.
+  </Card>
+  <Card title="Collapsed" icon="sidebar">
+    A narrow strip appears at the right edge, keeping the conversation alive. The strip's left edge glows in the assistant's color and pulses slowly while the assistant is working. The glow holds steady while a reply is unread.
+  </Card>
+</CardGroup>
+
+## Keyboard controls
+
+| Shortcut | What it does |
+|---|---|
+| `Ctrl+/` (`⌘/` on macOS) | Toggles between open and collapsed. Works from anywhere on the page. |
+| `Esc` | Collapses the panel to the strip (unless it is pinned). |
+| Click on page | Collapses the panel to the strip (unless it is pinned). |
+
+The pin button in the panel header keeps the panel open while you work on the page — useful for following steps the assistant gave you or comparing content in two panels. The pin state is remembered in the browser.
+
+## Layout and resizing
+
+The panel never overlays the page. The page column shrinks as the panel column grows, so all page content stays accessible and scrollable with the panel open.
+
+Backstage dialogs and drawers — such as the entity inspector or a Kubernetes pod viewer — open beside the panel column rather than over it. You can type in the panel while a dialog is open.
+
+<CardGroup cols={2}>
+  <Card title="Resizing" icon="arrows-left-right">
+    Drag the left edge of the panel to resize it. The keyboard also works: focus the edge and use arrow keys to step the width, or press `Home` to reset.
+  </Card>
+  <Card title="Reset width" icon="rotate-left">
+    Double-click the left edge to return to the default width instantly.
+  </Card>
+</CardGroup>
+
+Below tablet width the panel fills the full screen rather than sitting beside the page.
+
+## Page context and reading
+
+The panel tells the assistant which page it sits beside on every turn. The context includes the current URL path, the document title, and — when the page is a catalog entity — the entity ref (kind, namespace, name). The assistant receives this as a note appended to its instructions; it is never persisted.
+
+The built-in `read_current_page` client tool lets the assistant go further and read the page itself. When the assistant calls it, the tool traverses the rendered DOM and returns an outline of the page: open dialogs and drawers first, then the main content — headings, text, buttons, links, tabs, form fields, tables, alerts, and the lines around a search term in log regions. The portal chrome and the panel itself are skipped. The tool shows as a chip in the conversation when it runs.
+
+This works on any page in any plugin with no per-plugin code. Questions like "what does this mean?" and "which button do I press?" get accurate answers from the current state of the page.
+
+To disable page reading for the whole app:
+
+```yaml
+app:
+  extensions:
+    - assistant-client-tool:assistants/read-current-page: false
+```
+
+## `describe_portal` tool
+
+The built-in `describe_portal` tool tells the assistant about this Backstage instance: the installed plugins, every page with its path, the tabs on a catalog entity's page (Kubernetes, CI/CD, API definitions, and so on), and the contributed client tools — all read from the app tree that every new-frontend-system app builds automatically. The assistant can answer "what's in Backstage?" and "where do I find our API docs?" with accurate links, from any page, without the visualizer plugin.
+
+To disable portal description:
+
+```yaml
+app:
+  extensions:
+    - assistant-client-tool:assistants/read-current-page: false
+    - assistant-client-tool:assistants/describe-portal: false
+```
+
+## Picking assistants and history
+
+The panel opens the default assistant — the one designated in the admin editor — until the user picks another. Users who can access more than one assistant see a picker on the assistant's name in the panel header.
+
+<CardGroup cols={2}>
+  <Card title="Assistant picker" icon="robot">
+    Picking a different assistant starts a fresh conversation under that assistant. The pick is remembered in the browser and synced with the homepage composer, so a pick in either place is reflected in the other immediately. If the picked assistant is later removed or restricted, the panel falls back to the default.
+  </Card>
+  <Card title="History" icon="clock-rotate-left">
+    The history button in the panel header lists earlier conversations for the current assistant. Picking one remounts the surface on that conversation and continues it.
+  </Card>
+</CardGroup>
+
+The panel remembers the last conversation in the browser. Only the "+" (new conversation) button and "Open in Assistants" start a fresh thread.
+
+## "Open in Assistants"
+
+"Open in Assistants" at the top of the panel navigates to `/assistants/threads/<id>` and the panel resets. The conversation moves to the full page; it is not copied. From that point the conversation has one owner and the panel is free for a new one.
+
+<Note>
+  The panel button and strip are hidden on the Assistants page itself (to avoid nesting a panel beside the panel's own full-page surface) and for users who do not hold the `assistant.use` permission.
+</Note>

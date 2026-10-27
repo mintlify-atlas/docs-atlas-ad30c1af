@@ -1,0 +1,72 @@
+---
+title: "HTTP API Routes for Backstage Assistants"
+sidebarTitle: "HTTP Routes"
+description: "All REST endpoints exposed by the assistants backend plugin under /api/assistants, with their permission requirements and purposes."
+---
+
+All routes are under `/api/assistants`. Routes that access conversations are scoped to the owning user — a user cannot read, modify, or delete another user's threads or messages. Routes that access assistants also apply the per-assistant access policy stored on each definition, so a user only sees assistants they are permitted to use. The two Backstage permissions that gate these routes are `assistant.use` (for chat and conversation routes) and `assistant.manage` (for admin routes).
+
+<Note>
+Prompts and access policies are never returned to `GET /status` or any `assistant.use` route. Only the `assistant.manage` routes (`GET /manage/assistants` and its siblings) return full assistant definitions including the system prompt and access policy.
+</Note>
+
+---
+
+## User routes
+
+These routes require the `assistant.use` permission. A 403 is returned to callers who lack it.
+
+| Method | Path | Permission | Purpose |
+|---|---|---|---|
+| `GET` | `/status` | `assistant.use` | Returns accessible assistants (default first), the global model pool and defaults, each assistant's tool list, and the approval floor's tool names. Prompts and access policies are excluded. |
+| `POST` | `/chat` | `assistant.use` | Run a conversation turn; streams the reply as server-sent events. `tools` in the body carries client tool declarations from the browser; `page` carries the panel's page context (pathname, document title, and catalog entity ref when on an entity page). |
+| `GET` | `/chat/resume/:threadId` | `assistant.use` | Rejoin an in-flight reply's stream after a navigation or page reload. Replays the reply so far and follows it live. |
+| `POST` | `/chat/cancel/:threadId` | `assistant.use` | Stop an in-flight reply. The reply ends with "Request interrupted". |
+| `GET` | `/threads` | `assistant.use` | List the caller's conversations. `?assistantId=` filters to one assistant. |
+| `POST` | `/threads` | `assistant.use` | Create a new conversation. |
+| `GET` | `/threads/status` | `assistant.use` | Returns working, unread, and token count per conversation for the caller. |
+| `GET` | `/threads/:id` | `assistant.use` | Fetch one conversation by id (scoped to the owning user). |
+| `PATCH` | `/threads/:id` | `assistant.use` | Rename, pin, archive, or change the model or reasoning level of a conversation. |
+| `DELETE` | `/threads/:id` | `assistant.use` | Delete a conversation and all its messages. This is a hard delete; nothing is retained. |
+| `POST` | `/threads/:id/read` | `assistant.use` | Mark a conversation as read, clearing the unread indicator. |
+| `GET` | `/threads/:id/messages` | `assistant.use` | Fetch all messages in a conversation. |
+| `POST` | `/preview` | `assistant.use` | Fetch the current content behind a pending write for the approval card's diff view. Runs only the read tool configured in `approvalPreview.base`, as the same user. |
+| `POST` | `/elicitations/:id` | `assistant.use` | Answer an MCP server's mid-call question (elicitation). Only the user whose call the question interrupts may answer it. |
+| `POST` | `/held-calls/:id` | `assistant.use` | Answer a call held inside a provider's own tool loop (an approval card response or a client tool result). Only the user whose turn is holding the call may answer it. |
+
+<Note>
+The `POST /chat` body accepts `tools` (an array of client tool declarations — name, description, input schema, and attributes) and `page` (an object with `path`, `title`, and optionally `entityRef`). The backend appends a page context note to the turn's instructions when `page` is present and never persists it.
+</Note>
+
+---
+
+## OAuth routes
+
+These routes support the MCP OAuth flow for servers configured with `userCredentials.provider: oauth`. The callback and client-metadata routes require no Backstage bearer token; they rely on a short-lived state cookie and the browser's Backstage session cookie respectively.
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| `GET` | `/mcp/oauth/status` | `assistant.use` | Returns the caller's connection status for each server that uses its own OAuth (connected, disconnected, or needs reconnect). |
+| `POST` | `/mcp/:serverId/oauth/start` | `assistant.use` | Start a sign-in for the given server; returns the authorization URL to open in a popup. |
+| `DELETE` | `/mcp/:serverId/oauth` | `assistant.use` | Disconnect: revoke the grant at the server (when the server supports revocation) and delete the stored tokens. |
+| `GET` | `/mcp/oauth/callback` | state cookie + Backstage session cookie | Where the authorization server returns the user after sign-in. Verifies the `state` parameter (single-use, ten-minute expiry, bound to the initiating user) and posts the outcome to the opener window. |
+| `GET` | `/mcp/oauth/client-metadata/:serverId` | none | Serves the client metadata document for a server configured with `clientMetadataDocument: true`, used as the client id in dynamic registration. |
+
+---
+
+## Admin routes
+
+These routes require the `assistant.manage` permission. A 403 is returned to callers who lack it. Full assistant definitions — including system prompts, access policies, and audit fields — are only accessible through these endpoints.
+
+| Method | Path | Permission | Purpose |
+|---|---|---|---|
+| `GET` | `/capabilities` | `assistant.manage` | Returns the live, assignable inventory for the editor: Backstage actions, the model pool, each MCP server's reachability and tool list, and the approval floor. |
+| `GET` | `/manage/assistants` | `assistant.manage` | Returns all assistant definitions, including prompts, access policies, and audit fields (creator, editor, timestamps). |
+| `POST` | `/manage/assistants` | `assistant.manage` | Create a new assistant definition. |
+| `PUT` | `/manage/assistants/:id` | `assistant.manage` | Replace an assistant definition by id. |
+| `DELETE` | `/manage/assistants/:id` | `assistant.manage` | Delete an assistant. The default assistant cannot be deleted until another is designated with `PUT .../default`. |
+| `PUT` | `/manage/assistants/:id/default` | `assistant.manage` | Designate an assistant as the default; opens its access policy to every signed-in user and lists it first. |
+
+<Note>
+Deleting an assistant leaves its users' conversation history in the database (`threads` and `messages` tables). Deleted assistants no longer appear in the UI, but the data is preserved until users delete individual conversations.
+</Note>

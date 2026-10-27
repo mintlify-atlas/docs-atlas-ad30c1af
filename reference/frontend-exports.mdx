@@ -1,0 +1,227 @@
+---
+title: "Frontend Package Exports for Backstage Assistants"
+sidebarTitle: "Frontend Exports"
+description: "All public exports from @drewswiredin/backstage-plugin-assistants: entry points, plugin modules, API refs, components, permissions, and types."
+---
+
+The frontend package `@drewswiredin/backstage-plugin-assistants` exposes three entry points and a set of named exports for host app integration. The `/alpha` and `/home` subpaths each export a specific set of modules and components; the package root exports everything a host app needs to integrate with the plugin from other parts of the app.
+
+<Note>
+`/alpha` is Backstage's export convention for new-frontend-system plugins — it signals that these exports use the new frontend plugin API (`createPlugin`, `createFrontendModule`, blueprints). It is **not** a stability marker; the plugin is production-ready. When you see `import assistantsPlugin from '@drewswiredin/backstage-plugin-assistants/alpha'`, the `/alpha` is a subpath export, not a prerelease label.
+</Note>
+
+---
+
+## Entry points
+
+<CardGroup cols={3}>
+  <Card title="/alpha" icon="puzzle-piece">
+    The plugin itself and the panel module.
+
+    - `assistantsPlugin` — default export; the plugin that mounts the chat page at `/assistants` and registers the nav entry.
+    - `assistantsPanelModule` — named export; adds the floating side panel to every page.
+  </Card>
+  <Card title="/home" icon="house">
+    Homepage composer and its types.
+
+    - `assistantsHomeModule` — named export; adds the `AssistantComposer` widget to the home page system.
+    - `AssistantComposer` — React component; render the composer in any container.
+    - `AssistantComposerVariant` — TypeScript type for the `variant` prop (`"bar" | "padded" | "full" | "titled"`).
+  </Card>
+  <Card title="root" icon="box">
+    Integration exports for the host app. Everything in the table below.
+  </Card>
+</CardGroup>
+
+### Wiring up the entry points
+
+```ts
+// packages/app/src/App.tsx
+import { createApp } from '@backstage/frontend-defaults';
+import assistantsPlugin, {
+  assistantsPanelModule,
+} from '@drewswiredin/backstage-plugin-assistants/alpha';
+import { assistantsHomeModule } from '@drewswiredin/backstage-plugin-assistants/home';
+
+export default createApp({
+  features: [
+    assistantsPlugin,
+    assistantsPanelModule,   // optional — adds the side panel
+    assistantsHomeModule,    // optional — adds the homepage composer widget
+  ],
+});
+```
+
+---
+
+## Root entry exports
+
+Import these from the bare package name `@drewswiredin/backstage-plugin-assistants`.
+
+| Export | Type | Purpose |
+|---|---|---|
+| `rootRouteRef` | `RouteRef` | Route ref for the `/assistants` page. Use to build links to the assistants page from other plugins. |
+| `threadRouteRef` | `SubRouteRef` | Sub-route ref for a single conversation at `/assistants/threads/:threadId`. |
+| `assistantsApiRef` | `ApiRef<AssistantsApi>` | Backend client API ref. Inject with `useApi(assistantsApiRef)` to call the backend (assistant list, threads, status). |
+| `AssistantsNavIcon` | Component | Nav icon with a live working/unread indicator dot. Use this when building a custom sidebar item for the assistants page. |
+| `AssistantClientToolBlueprint` | Blueprint | Contribute a client tool — a tool that runs in the user's browser with the user's own credentials. |
+| `clientToolDataRef` | `DataRef` | The data reference used by the extension system to pass client tool definitions between extensions. |
+| `clientToolsApiRef` | `ApiRef<ClientToolsApi>` | Registry of all contributed client tools. Read by every conversation surface at runtime. |
+| `usePanelControl` | Hook | Open the panel programmatically from any page component. Returns `undefined` in an app without `assistantsPanelModule`. |
+| `assistantUsePermission` | Permission | Re-exported from `-common`; use with `usePermission` to gate UI elements behind `assistant.use`. |
+| `assistantManagePermission` | Permission | Re-exported from `-common`; use with `usePermission` to gate admin UI behind `assistant.manage`. |
+
+---
+
+## TypeScript types
+
+The following types are exported for TypeScript consumers. Import them from the package root alongside the values they describe.
+
+| Type | Description |
+|---|---|
+| `AssistantsApi` | The backend client interface — assistant list, threads, status. Satisfied by the default API implementation. |
+| `ConversationStatusRow` | A row from `GET /threads/status`: working flag, unread flag, and token count for one conversation. |
+| `ThreadPatch` | The body shape for `PATCH /threads/:id`: rename, pin, archive, or change model/reasoning. |
+| `ClientToolsApi` | The registry interface for contributed client tools. |
+| `PanelControl` | The object returned by `usePanelControl`; has an `open(options)` method. |
+| `PanelOpenOptions` | Options for `panel.open()`: `firstMessage` to pre-fill the composer, and `assistantId` to open on a specific assistant. |
+| `AssistantClientTool` | The full client tool contract passed to `AssistantClientToolBlueprint.make()`. |
+| `ClientToolAuthRequirement` | The `auth` shape for a client tool: `oauth` (names a Backstage OAuth API ref and scopes) or `custom` (supplies an `acquire` function). |
+| `ClientToolContext` | The second argument to a tool's `execute` function: `{ apis, credential, signal }`. |
+| `ClientToolRenderProps` | Props passed to a tool's optional `render` function. |
+| `ClientToolInterrupt` | The approval or connect prompt a custom `render` receives when the tool is gated or needs a credential. |
+| `AssistantComposerVariant` | The `variant` prop type for `AssistantComposer`: `"bar" \| "padded" \| "full" \| "titled"`. |
+
+---
+
+## Permissions
+
+Both permissions are defined in `@drewswiredin/backstage-plugin-assistants-common` and re-exported from the root entry point for convenience.
+
+<Accordion title="assistantUsePermission — assistant.use">
+
+**Name:** `assistant.use` | **Action:** `read`
+
+Gates the user-facing routes (`GET /status`, `POST /chat`, all `/threads` routes) on the backend, and the chat surface on the frontend. The button and nav entry are hidden from users who lack this permission when you implement the check in your nav (see below).
+
+Which assistants a holder actually sees is a separate, per-assistant access policy stored on each definition — not this permission.
+
+```ts
+import { assistantUsePermission } from '@drewswiredin/backstage-plugin-assistants-common';
+```
+
+</Accordion>
+
+<Accordion title="assistantManagePermission — assistant.manage">
+
+**Name:** `assistant.manage` | **Action:** `update`
+
+Gates the `/manage/*` and `/capabilities` routes on the backend, and the admin editor gear on the frontend. Grant this to platform engineers or admins who should be able to create, edit, and delete assistants.
+
+```ts
+import { assistantManagePermission } from '@drewswiredin/backstage-plugin-assistants-common';
+```
+
+</Accordion>
+
+---
+
+## Recipes
+
+### Conditionally hide the nav entry
+
+The auto-registered nav entry is not permission-gated by default: a user without `assistant.use` still sees the nav item and lands on a "You are not permitted" page. To hide it entirely for unauthorized users, take the entry in a custom `NavContentBlueprint` and wrap it in a permission check:
+
+```tsx
+import type { ReactNode } from 'react';
+import { usePermission } from '@backstage/plugin-permission-react';
+import { assistantUsePermission } from '@drewswiredin/backstage-plugin-assistants-common';
+
+function IfAssistantsAllowed({ children }: { children: ReactNode }) {
+  const { allowed } = usePermission({ permission: assistantUsePermission });
+  return allowed ? <>{children}</> : null;
+}
+```
+
+Use it inside a `NavContentBlueprint` component around the taken `page:assistants` nav item:
+
+```tsx
+const assistants = nav.take('page:assistants');
+return (
+  <Sidebar>
+    <IfAssistantsAllowed>{assistants}</IfAssistantsAllowed>
+    {nav.rest({ sortBy: 'title' })}
+  </Sidebar>
+);
+```
+
+### Open the panel programmatically
+
+Use `usePanelControl` to open the side panel from any page component. The hook returns `undefined` when `assistantsPanelModule` is not in the app's features, so always guard the call:
+
+```tsx
+import { usePanelControl } from '@drewswiredin/backstage-plugin-assistants';
+
+function MyComponent() {
+  const panel = usePanelControl();
+  // panel is undefined in an app without assistantsPanelModule
+  return (
+    <button onClick={() => panel?.open({ firstMessage: 'Tell me about this service' })}>
+      Ask the assistant
+    </button>
+  );
+}
+```
+
+`PanelOpenOptions` also accepts `assistantId` to open the panel on a specific assistant rather than the default.
+
+### Contribute a client tool
+
+Use `AssistantClientToolBlueprint` to register a browser-side tool that runs with the user's own credentials. Contribute it via a frontend module and add it to an assistant's tool list in the editor:
+
+```ts
+import { createFrontendModule } from '@backstage/frontend-plugin-api';
+import { microsoftAuthApiRef } from '@backstage/core-plugin-api';
+import { AssistantClientToolBlueprint } from '@drewswiredin/backstage-plugin-assistants';
+
+const recentBuilds = AssistantClientToolBlueprint.make({
+  name: 'recent-builds',
+  params: defineParams =>
+    defineParams<{ project: string; top?: number }, { builds: unknown[] }>({
+      name: 'azure-devops__get_recent_builds',
+      title: 'Recent builds',
+      description: 'The latest Azure DevOps builds of a project.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project: { type: 'string' },
+          top: { type: 'number', description: 'How many; default 10.' },
+        },
+        required: ['project'],
+      },
+      attributes: { readOnly: true },
+      auth: {
+        kind: 'oauth',
+        system: 'Azure DevOps',
+        apiRef: microsoftAuthApiRef,
+        scopes: ['499b84ac-1321-427f-aa17-267ca6975798/user_impersonation'],
+      },
+      execute: async ({ project, top = 10 }, { credential, signal }) => {
+        const res = await fetch(
+          `https://dev.azure.com/my-org/${project}/_apis/build/builds?$top=${top}&api-version=7.1`,
+          { headers: { Authorization: `Bearer ${credential}` }, signal },
+        );
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        const { value } = await res.json();
+        return { builds: value.map((b: any) => ({ id: b.id, status: b.status, result: b.result })) };
+      },
+    }),
+});
+
+export const assistantToolsModule = createFrontendModule({
+  pluginId: 'assistants',
+  extensions: [recentBuilds],
+});
+```
+
+Tool names must follow the `<namespace>__<tool>` convention. After adding the module to `features`, give the tool to an assistant in the editor under **Browser tools**.

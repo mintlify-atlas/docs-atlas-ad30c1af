@@ -1,0 +1,107 @@
+---
+title: "AssistantClientToolBlueprint: Contribute Browser Tools"
+sidebarTitle: "Client Tool Blueprint"
+description: "The AssistantClientToolBlueprint extension lets any Backstage frontend plugin register a browser-side tool that assistants can call as the signed-in user."
+---
+
+`AssistantClientToolBlueprint` is the extension point for contributing client tools to Backstage Assistants. Any frontend plugin or module can register a browser-side tool without modifying the assistants plugin itself. The browser declares the tool's name, description, JSON Schema, and attributes on every `/chat` request; the backend offers it to the model; and when the model calls it, the browser runs the tool's `execute` function with the signed-in user's own credentials. The credential never leaves the browser, and client tools are never exposed over MCP.
+
+## Registration
+
+Create a `createFrontendModule` that contains one or more `AssistantClientToolBlueprint.make()` extensions. The following example shows a complete tool that fetches a resource from an internal API using a Microsoft OAuth token:
+
+```ts
+import { createFrontendModule } from '@backstage/frontend-plugin-api';
+import { microsoftAuthApiRef } from '@backstage/core-plugin-api';
+import { AssistantClientToolBlueprint } from '@drewswiredin/backstage-plugin-assistants';
+
+export default createFrontendModule({
+  pluginId: 'my-plugin',
+  extensions: [
+    AssistantClientToolBlueprint.make({
+      name: 'my-plugin__get_resource',
+      params: {
+        description: 'Fetch a resource from the internal API',
+        schema: {
+          resourceId: z.string().describe('The resource ID to look up'),
+        },
+        attributes: { readOnly: true },
+        auth: { microsoftAuth: microsoftAuthApiRef },
+        async execute({ resourceId }, { auth }) {
+          const token = await auth.microsoftAuth.getAccessToken(['user.read']);
+          // ... call the API ...
+          return { name: 'My Resource', status: 'active' };
+        },
+      },
+    }),
+  ],
+});
+```
+
+Add the module to the app's `features` array, then give an assistant the tool by name in the editor's **Tools** section under **Browser tools**.
+
+## Blueprint fields
+
+<ParamField path="name" type="string" required>
+  The tool's namespaced identifier in the form `<namespace>__<tool>` (two underscores), for example `my-plugin__get_resource`. The namespace keeps a plugin's tools distinct from Backstage actions and MCP server tools.
+</ParamField>
+
+<ParamField path="description" type="string" required>
+  What the tool does, shown to the model. At most 4,000 characters.
+</ParamField>
+
+<ParamField path="schema" type="object" required>
+  A JSON Schema object (`type: object`) describing the tool's input parameters. At most 8 KB serialized.
+</ParamField>
+
+<ParamField path="attributes.readOnly" type="boolean">
+  If `false` or absent (and `destructive` is not set), the tool asks the user for approval before every call. Set `true` on tools that only read data.
+</ParamField>
+
+<ParamField path="attributes.destructive" type="boolean">
+  If `true`, the tool always asks before running, regardless of `readOnly`. Use this for any tool that modifies, deletes, or has side effects that cannot be undone.
+</ParamField>
+
+<ParamField path="auth" type="object">
+  A map of auth API refs the tool needs. At runtime the Backstage OAuth API is resolved and its credential is passed to `execute` through the `auth` context. The runtime acquires the credential silently first; if that yields nothing it shows a **Connect** control in the conversation and acquires on the click, so no popup is opened outside a user gesture.
+</ParamField>
+
+<ParamField path="execute" type="function" required>
+  An async function that receives the parsed input parameters and a `ClientToolContext` object (`{ apis, credential, signal }`). Its return value must be JSON-serializable and becomes the tool result sent back to the model. A thrown error, a timeout (default 30 s, at most 120 s), a declined approval, or a dismissed Connect control each become an error result the model explains.
+</ParamField>
+
+<ParamField path="render" type="ComponentType">
+  An optional custom React component for rendering the tool call card in the conversation. Required for tools without `execute`, which must call `addResult` themselves — this is how `render_form` works. Optional for tools with `execute`, which otherwise show the generic input and output view.
+</ParamField>
+
+## Approval behavior
+
+A tool that is not `readOnly`, or is `destructive`, always asks the user for approval before executing. This check is enforced by the browser runtime regardless of whether the tool is listed in `requireApproval` config. There is no **Always allow** for client tools — every gated call asks individually. A read-only tool asks only when its name appears in the backend's `assistants.requireApproval` config list.
+
+## Allowlist requirement
+
+A contributed tool must appear in the assistant's `allowedTools` (added in the editor under **Browser tools**) to be offered to the model. The backend also drops a declaration if its name is not in the `<namespace>__<tool>` form, if it collides with an MCP server tool name, or if it exceeds 4,000 characters in description or 8 KB in schema. At most 30 client tools per request are offered, built-ins included.
+
+## `clientToolsApiRef`
+
+`clientToolsApiRef` is the API ref for the client tool registry. It is available through Backstage's dependency injection to any extension that needs to read the registered tools. Every conversation surface reads from this registry on each turn.
+
+```ts
+import { clientToolsApiRef } from '@drewswiredin/backstage-plugin-assistants';
+```
+
+## `clientToolDataRef`
+
+`clientToolDataRef` is the extension data ref used to pass an `AssistantClientTool` through the extension input system. All `AssistantClientToolBlueprint` extensions produce this ref; it is consumed by `api:assistants/client-tools`.
+
+```ts
+import { clientToolDataRef } from '@drewswiredin/backstage-plugin-assistants';
+```
+
+<Tip>
+  Follow the naming pattern `<your-plugin-namespace>__<snake_case_verb_noun>` (two underscores between the namespace and the tool name). For example: `azure-devops__get_recent_builds` or `kubernetes__list_workloads`. This matches the built-in tool convention and makes the tool's origin immediately readable in logs and the editor.
+</Tip>
+
+<Note>
+  The four built-in client tools — `render_form`, `download_file`, `read_current_page`, and `describe_portal` — are always available on every assistant and cannot be removed via the `allowedTools` list. They count toward the 30-per-request cap, but they do not need to be added to an assistant's tool list in the editor.
+</Note>

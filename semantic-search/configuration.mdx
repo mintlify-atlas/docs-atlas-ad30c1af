@@ -1,0 +1,105 @@
+---
+title: "Configure the Semantic Search Knowledge Index"
+sidebarTitle: "Configuration"
+description: "Set the embedding model, configure per-source weights and result caps, and control which document types are copied into the knowledge index."
+---
+
+All semantic search configuration lives under `assistants.semanticSearch` in `app-config.yaml`. The only required field is `embeddingModel`; everything else has a sensible default.
+
+## Minimal Configuration
+
+The smallest valid configuration names an embedding model from a provider you have already declared in `assistants.providers`:
+
+```yaml
+assistants:
+  providers:
+    openai:
+      type: openai
+      apiKey: ${OPENAI_API_KEY}
+      models:
+        - name: gpt-5.5
+  semanticSearch:
+    embeddingModel: openai:text-embedding-3-small
+```
+
+The value of `embeddingModel` is `<providerId>:<model>`, where `providerId` matches a key in `assistants.providers`. For an Azure OpenAI deployment, use the name you gave the embedding deployment:
+
+```yaml
+assistants:
+  semanticSearch:
+    embeddingModel: azure:<embedding-deployment-name>
+```
+
+## Ranking by Source
+
+Every source shares one index, so a large source — for example, thousands of Jira tickets that all mention the same system — can crowd out the single runbook section that actually answers the question. The `types` key lets you weight each source, cap how many of its results appear per answer, and control whether it is searched by default:
+
+```yaml
+assistants:
+  semanticSearch:
+    embeddingModel: openai:text-embedding-3-small
+    maxResults: 8
+    types:
+      software-catalog: { weight: 1.5 }
+      techdocs: { weight: 1.2 }
+      confluence: { weight: 1.0 }
+      jira:
+        weight: 0.5
+        maxResults: 2
+        description: ticket history, decisions and status
+```
+
+The keys under `types` are the document type names Backstage search uses: `software-catalog`, `techdocs`, or a collator's own type string (e.g. `confluence`, `jira`).
+
+<Tip>
+  Types not listed under `types` are still copied into the index and ranked with a default weight of `1`. You only need to list a type if you want to change its weight, cap its results, make it opt-in, or add a description for the model.
+</Tip>
+
+### Opt-in and Disabled Sources
+
+- **`default: false`** — makes the source opt-in. The model searches it only when it explicitly passes `types: ['jira']` in its tool call. The tool description tells the model which types are opt-in and what they contain.
+- **`enabled: false`** — stops copying the source entirely. Any chunks already stored for that type are deleted on its next search run.
+
+## Index Fill Timing
+
+The index fills as search runs. Each document type arrives when its collator next runs on the schedule you configured for that collator. A source's first run embeds all of its documents; later runs are incremental — only new and changed sections are embedded, and removed sections are deleted.
+
+## Triggering a Collator Manually
+
+Rather than waiting for a collator's scheduled run, you can trigger it immediately using the Backstage scheduler API with a user or service token:
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  https://backstage.example.com/api/search/.backstage/scheduler/v1/tasks/search_index_jira/trigger
+```
+
+The task ID format is `search_index_<type>`, lowercased, with the type's first hyphen replaced by an underscore. For example:
+
+- `jira` → `search_index_jira`
+- `software-catalog` → `search_index_software_catalog`
+- `techdocs` → `search_index_techdocs`
+
+The backend logs `Knowledge index refreshed` with the type name and document counts when the copy finishes.
+
+## Full Configuration Reference
+
+| Key | Default | Meaning |
+|---|---|---|
+| `assistants.semanticSearch.embeddingModel` | required | `<providerId>:<model>` from `assistants.providers` |
+| `assistants.semanticSearch.maxResults` | `8` | Results per answer (up to 20) |
+| `assistants.semanticSearch.types.<type>.weight` | `1` | Multiplies the fused score for this type; `0` never returns it |
+| `assistants.semanticSearch.types.<type>.default` | `true` | `false` makes the type opt-in — searched only when the model names it |
+| `assistants.semanticSearch.types.<type>.maxResults` | — | At most this many results of this type while other types can fill remaining slots |
+| `assistants.semanticSearch.types.<type>.enabled` | `true` | `false` stops copying the type and deletes its chunks on its next run |
+| `assistants.semanticSearch.types.<type>.description` | — | What the source holds; shown to the model in the tool description |
+
+<Note>
+  The `search-knowledge` action registers under the `assistants` plugin. For it to be available, `assistants` must appear in `backend.actions.pluginSources` in your configuration — as it already does if you are using the built-in tools:
+
+  ```yaml
+  backend:
+    actions:
+      pluginSources:
+        - assistants
+  ```
+</Note>

@@ -1,72 +1,106 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mintlify Starter Kit",
+  "name": "Backstage Assistants",
+  "theme": "luma",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#7624f4",
+    "light": "#040c0c",
+    "dark": "#fcfcfc"
   },
-  "favicon": "/favicon.svg",
-  "navigation": {
-    "pages": [
-      {
-        "group": "Getting Started",
-        "pages": [
-          "index",
-          "quickstart"
-        ]
-      }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
+  "favicon": "https://media.brand.dev/0952c4a0-1b8d-4a41-8bd3-c76302ab0ed1.png",
   "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
+    "light": "https://media.brand.dev/06518907-3bc9-4c15-a472-8d999109d397.svg",
+    "dark": "https://media.brand.dev/5f46cf99-5827-486f-9a5c-8062fac10015.svg"
   },
   "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:support@mintlify.com"
-      }
-    ],
     "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://app.mintlify.com"
+      "type": "github",
+      "href": "https://github.com/drewswiredin/backstage-assistants"
     }
-  },
-  "contextual": {
-    "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude",
-      "perplexity",
-      "mcp",
-      "cursor",
-      "vscode"
-    ]
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
+      "github": "https://github.com/drewswiredin/backstage-assistants"
     }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "first-run"
+            ]
+          },
+          {
+            "group": "Frontend",
+            "pages": [
+              "frontend/chat-page",
+              "frontend/panel",
+              "frontend/homepage-composer",
+              "frontend/client-tools"
+            ]
+          },
+          {
+            "group": "Backend",
+            "pages": [
+              "backend/installation",
+              "backend/providers",
+              "backend/mcp-servers",
+              "backend/permissions",
+              "backend/production"
+            ]
+          },
+          {
+            "group": "Semantic Search",
+            "pages": [
+              "semantic-search/overview",
+              "semantic-search/configuration",
+              "semantic-search/custom-ranking"
+            ]
+          },
+          {
+            "group": "Concepts",
+            "pages": [
+              "concepts/assistants-and-tools",
+              "concepts/approval-gate",
+              "concepts/security"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Reference",
+        "groups": [
+          {
+            "group": "Configuration",
+            "pages": [
+              "reference/config",
+              "reference/http-routes",
+              "reference/frontend-exports"
+            ]
+          },
+          {
+            "group": "Extension Points",
+            "pages": [
+              "reference/model-providers-extension",
+              "reference/client-tool-blueprint",
+              "reference/knowledge-ranking-extension"
+            ]
+          },
+          {
+            "group": "Troubleshooting",
+            "pages": [
+              "reference/troubleshooting",
+              "reference/changelog"
+            ]
+          }
+        ]
+      }
+    ]
   }
 }

@@ -1,47 +1,136 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with Backstage Assistants in 15 Minutes"
+sidebarTitle: "Quickstart"
+description: "Install the frontend and backend packages, configure a model provider, and start chatting with your Backstage catalog in under 15 minutes."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+By the end of this guide you will have a working AI assistant embedded in your Backstage developer portal — capable of answering questions about your catalog and TechDocs, grounded in your own data, not the model's memory. You will install the frontend and backend packages, wire them into your app, configure a model provider, and open `/assistants` to start your first conversation. The whole thing takes under 15 minutes on a running Backstage instance that meets the [requirements](/introduction#requirements).
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+  <Step title="Install the packages">
+    Run these commands from the root of your Backstage monorepo. The `-common` package is pulled in transitively and does not need to be installed separately.
 
     ```bash
-    npm install your-package
+    # Add the frontend plugin to the app package
+    yarn --cwd packages/app add @drewswiredin/backstage-plugin-assistants
+
+    # Add the backend plugin to the backend package
+    yarn --cwd packages/backend add @drewswiredin/backstage-plugin-assistants-backend
     ```
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
 
-    ```bash
-    your-cli init
+  <Step title="Wire up the frontend plugin">
+    Add `assistantsPlugin` to your app's `features` array. The plugin registers its own **Assistants** nav item automatically — no extra nav code is needed.
+
+    `/alpha` is Backstage's export convention for new-frontend-system plugins; it is not a stability marker.
+
+    ```ts
+    // packages/app/src/App.tsx
+    import { createApp } from '@backstage/frontend-defaults';
+    import assistantsPlugin from '@drewswiredin/backstage-plugin-assistants/alpha';
+
+    export default createApp({
+      features: [
+        assistantsPlugin,
+        // ...your other features
+      ],
+    });
+    ```
+
+    <Tip>
+      For live working and unread status, add Signals to the app and `@backstage/plugin-signals-backend` to the backend. Without it the page polls every 10 seconds.
+
+      ```ts
+      import signalsPlugin from '@backstage/plugin-signals/alpha';
+
+      export default createApp({
+        features: [assistantsPlugin, signalsPlugin],
+      });
+      ```
+    </Tip>
+  </Step>
+
+  <Step title="Add the backend plugin">
+    Register the backend plugin in your backend's entry point with a single dynamic import. The backend refuses to start until `assistants.defaultModel` and at least one provider with one model are configured — you will add those in the next step.
+
+    ```ts
+    // packages/backend/src/index.ts
+    backend.add(import('@drewswiredin/backstage-plugin-assistants-backend'));
     ```
   </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+
+  <Step title="Configure app-config.yaml">
+    Add an `assistants` block to `app-config.yaml`. The example below uses [OpenRouter](https://openrouter.ai) as an OpenAI-compatible provider and enables the built-in catalog and TechDocs read tools.
+
+    ```yaml
+    assistants:
+      defaultModel: openrouter:anthropic/claude-sonnet-5
+      builtinActions: true # registers the built-in catalog/TechDocs read tools
+      providers:
+        openrouter:
+          type: openai-compatible
+          apiKey: ${OPENROUTER_API_KEY}
+          baseUrl: https://openrouter.ai/api/v1
+          models:
+            - name: anthropic/claude-sonnet-5
+              contextWindow: 1000000
+
+    backend:
+      actions:
+        pluginSources:
+          - assistants # plus catalog, scaffolder, etc. for their actions
+    ```
+
+    <Note>
+      The `backend.actions.pluginSources` entry is **required**. Backstage's actions service only exposes actions from the plugin sources you explicitly allow. Without `assistants` listed here, an assistant's tool list will always resolve to empty — no built-in tools, no `search-knowledge`, nothing. MCP and browser client tools are unaffected.
+    </Note>
+
+    Model IDs are always in `<providerId>:<model>` format, where `providerId` is the key you choose under `providers`. You can configure multiple providers at once; the union of their `models` becomes the pool.
+
+    **Other supported provider types:**
+
+    | Provider | `type` value | Notes |
+    | --- | --- | --- |
+    | OpenAI | `openai` | Set `apiKey` |
+    | Anthropic | `anthropic` | Set `apiKey` |
+    | Azure OpenAI / AI Foundry | `azure` | Set `apiKey` and `baseUrl` |
+    | OpenAI-compatible endpoint | `openai-compatible` | Set `apiKey` and `baseUrl` |
+  </Step>
+
+  <Step title="Set the API key environment variable">
+    Set your provider's API key in the backend's environment. Never commit secrets to `app-config.yaml`.
 
     ```bash
-    your-cli start
+    export OPENROUTER_API_KEY=sk-or-...
     ```
+
+    Adjust the variable name to match what you referenced in the `apiKey` field of your chosen provider (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`).
+  </Step>
+
+  <Step title="Start the app and open /assistants">
+    Start your Backstage app as usual:
+
+    ```bash
+    yarn dev
+    ```
+
+    On a healthy start you will see this line in the backend log:
+
+    ```
+    AI Assistants backend plugin initialized
+    ```
+
+    The log entry includes the model count, the default model ID, whether `builtinActions` is enabled, and how many assistants exist. On first start, one assistant is seeded automatically and designated as the default — open to every signed-in user with the three built-in read tools.
+
+    Navigate to **`/assistants`** in your browser and start your first conversation. Ask about a system in your catalog, look up who owns a service, or ask about your TechDocs — every answer comes from your own data.
   </Step>
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+## What's next
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
-</Tip>
+Once your assistant is running, explore what you can do next:
+
+- **[First Run](/first-run)** — understand what was seeded, how to use the in-app editor to create and configure assistants, and how permissions work.
+- **Add the side panel** — import `assistantsPanelModule` alongside `assistantsPlugin` in your `features` array to get a floating panel on every page, toggled with `Ctrl+/` (`⌘/` on macOS).
+- **Add more tools** — wire up `@backstage/plugin-catalog-backend`, `@backstage/plugin-scaffolder-backend`, and `@backstage/plugin-search-backend` with their collators, then add their IDs to `backend.actions.pluginSources` and assign tools to an assistant in the editor.
+- **Add MCP servers** — configure external tools under `assistants.mcp.servers` in `app-config.yaml`.

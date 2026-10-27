@@ -1,0 +1,147 @@
+---
+title: "Gate Access to Backstage Assistants with Permissions"
+sidebarTitle: "Permissions"
+description: "Control who can chat and who can manage assistants with the assistant.use and assistant.manage Backstage permissions and per-assistant access policies."
+---
+
+The plugin defines two Backstage permissions in `@drewswiredin/backstage-plugin-assistants-common`. These permissions are enforced server-side on every route (returning 403 when denied) and checked client-side with `usePermission`. They are registered with `coreServices.permissionsRegistry`, so they appear in permission UIs that discover permissions through the standard metadata endpoint — including the RBAC role editor.
+
+<Note>
+  Backstage permissions gate access to the plugin as a whole. A separate per-assistant access policy — `allowAuthenticated`, `users[]`, or `groups[]` stored on each assistant definition — controls which assistants a permitted user can see. The two are independent: a user must hold `assistant.use` to access the plugin, and then the access policy determines which assistants appear.
+</Note>
+
+## Permissions reference
+
+| Permission | `name` | `action` | Gates |
+|---|---|---|---|
+| `assistantUsePermission` | `assistant.use` | `read` | User-facing routes (`GET /status`, `POST /chat`, `/threads`) and the chat surface |
+| `assistantManagePermission` | `assistant.manage` | `update` | `/manage/*` and `/capabilities` routes, and the admin editor (the gear icon) |
+
+## Default behavior
+
+Under create-app's default allow-all permission policy, every signed-in user holds both permissions. Gating takes effect once permissions are enabled and a custom `PermissionPolicy` is installed. With `permission.enabled` unset or `false`, Backstage skips policy evaluation entirely and the effect is the same as allow-all.
+
+## Custom PermissionPolicy
+
+To gate by group membership, write a `PermissionPolicy` and register it as a backend module. The example below allows members of `group:default/assistants-users` to use the plugin and members of `group:default/assistants-admins` to manage it:
+
+```ts
+// packages/backend/src/permissionPolicy.ts
+import { createBackendModule } from '@backstage/backend-plugin-api';
+import { policyExtensionPoint } from '@backstage/plugin-permission-node/alpha';
+import {
+  PermissionPolicy,
+  PolicyQuery,
+  PolicyQueryUser,
+} from '@backstage/plugin-permission-node';
+import {
+  AuthorizeResult,
+  PolicyDecision,
+} from '@backstage/plugin-permission-common';
+
+class AssistantsPolicy implements PermissionPolicy {
+  async handle(
+    req: PolicyQuery,
+    user?: PolicyQueryUser,
+  ): Promise<PolicyDecision> {
+    const name = req.permission.name;
+    if (name === 'assistant.use' || name === 'assistant.manage') {
+      // Group memberships arrive as ownership entity refs on the caller.
+      const groups = user?.info.ownershipEntityRefs ?? [];
+      const isAdmin = groups.includes('group:default/assistants-admins');
+      const isUser = groups.includes('group:default/assistants-users');
+      const allowed = name === 'assistant.manage' ? isAdmin : isUser || isAdmin;
+      return { result: allowed ? AuthorizeResult.ALLOW : AuthorizeResult.DENY };
+    }
+    // Leave every other plugin's permissions to your wider policy.
+    return { result: AuthorizeResult.ALLOW };
+  }
+}
+
+export default createBackendModule({
+  pluginId: 'permission',
+  moduleId: 'assistants-policy',
+  register(reg) {
+    reg.registerInit({
+      deps: { policy: policyExtensionPoint },
+      async init({ policy }) {
+        policy.setPolicy(new AssistantsPolicy());
+      },
+    });
+  },
+});
+```
+
+Wire the module into the backend and remove the allow-all module (the policy extension point accepts exactly one policy):
+
+```ts
+// packages/backend/src/index.ts
+backend.add(import('@backstage/plugin-permission-backend'));
+// backend.add(import('@backstage/plugin-permission-backend-module-allow-all-policy')); // remove
+backend.add(import('./permissionPolicy'));
+```
+
+Group membership is resolved from the caller's `ownershipEntityRefs`, populated by your auth provider from the catalog. The groups referenced in the policy must exist in the catalog and users must be members.
+
+## RBAC plugin
+
+With [`@backstage-community/plugin-rbac-backend`](https://github.com/backstage/community-plugins/tree/main/workspaces/rbac) in place of a hand-written policy, list the plugin so its permissions are discoverable, then bind them to roles from the RBAC UI or a policy CSV file:
+
+```yaml
+# app-config.yaml
+permission:
+  enabled: true
+  rbac:
+    pluginsWithPermission: [assistants]
+```
+
+```csv
+p, role:default/assistants-users, assistant.use, read, allow
+p, role:default/assistants-admins, assistant.manage, update, allow
+g, group:default/assistants-users, role:default/assistants-users
+g, group:default/assistants-admins, role:default/assistants-admins
+```
+
+## Per-assistant access policy
+
+Each assistant definition carries an access policy — `allowAuthenticated`, `users[]`, or `groups[]` — that controls which users see that assistant. This is stored in the database and managed in the editor, not in `app-config.yaml`. It is orthogonal to the Backstage permissions: a user needs `assistant.use` to access the plugin, and the access policy then filters which assistants appear to them.
+
+The default assistant is always open to every authenticated user; it cannot be restricted until another assistant is designated as the default.
+
+## Hiding the nav entry
+
+The plugin's nav entry is not permission-gated by default: a user without `assistant.use` sees the nav item and lands on a "You are not permitted to use assistants" page. To hide the entry entirely for those users, take the nav item in a custom `NavContentBlueprint` and wrap it in a permission check using `assistantUsePermission` from the `-common` package:
+
+```tsx
+// packages/app/src/modules/nav/Sidebar.tsx
+import type { ReactNode } from 'react';
+import { Sidebar, SidebarItem } from '@backstage/core-components';
+import { NavContentBlueprint } from '@backstage/plugin-app-react';
+import { usePermission } from '@backstage/plugin-permission-react';
+import { assistantUsePermission } from '@drewswiredin/backstage-plugin-assistants-common';
+
+function IfAssistantsAllowed({ children }: { children: ReactNode }) {
+  const { allowed } = usePermission({ permission: assistantUsePermission });
+  return allowed ? <>{children}</> : null;
+}
+
+export const SidebarContent = NavContentBlueprint.make({
+  params: {
+    component: ({ navItems }) => {
+      const nav = navItems.withComponent(item => (
+        <SidebarItem icon={() => item.icon} to={item.href} text={item.title} />
+      ));
+      const assistants = nav.take('page:assistants');
+      return (
+        <Sidebar>
+          {nav.take('page:catalog')}
+          <IfAssistantsAllowed>{assistants}</IfAssistantsAllowed>
+          {nav.rest({ sortBy: 'title' })}
+        </Sidebar>
+      );
+    },
+  },
+});
+```
+
+`assistantUsePermission` is exported from `@drewswiredin/backstage-plugin-assistants-common` alongside `assistantManagePermission` and the `assistantsPermissions` array.

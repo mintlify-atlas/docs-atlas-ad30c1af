@@ -1,0 +1,142 @@
+---
+title: "The Approval Gate: Human-in-the-Loop for Tool Calls"
+sidebarTitle: "Approval Gate"
+description: "The approval gate pauses the model loop and asks the user to Allow, Always allow, or Deny a tool call before it executes. It is enforced in code, not in a model prompt."
+---
+
+The approval gate is a config-controlled human checkpoint — not a permission system. It withholds execution of a tool call pending explicit user consent. When a tool is in the approval floor, the model loop stops at that call and presents an approval card in the conversation. Nothing in the system prompt asks the model to check with the user; the pause is enforced deterministically in code.
+
+<Warning>
+The approval gate defaults to empty. If you give an assistant write-capable actions or MCP tools and do not list them in `requireApproval`, those tools will run without any confirmation. List every action or MCP tool that mutates state — `register-entity`, `unregister-entity`, `execute-template`, `create_pull_request`, `push_files`, and any others that write — in `requireApproval` before deploying.
+</Warning>
+
+## What the approval floor is
+
+The approval floor is the union of two config lists:
+
+- `assistants.requireApproval` — global; accepts Backstage action ids, namespaced MCP tool names (`<serverId>__<tool>`), and client tool names (`<namespace>__<tool>`).
+- `mcp.servers.<id>.requireApproval` — per-server; accepts tool names for that server; the backend automatically namespaces them as `<serverId>__<tool>`.
+
+The **effective approval set for a turn** is this floor intersected with the assistant's `allowedTools`. A tool the assistant is not given is never gated, and a gated tool the assistant is not given is ignored. The gate is config-only — editing an assistant at runtime cannot weaken it.
+
+```yaml
+assistants:
+  requireApproval:
+    - execute-template
+    - register-entity
+  mcp:
+    servers:
+      github:
+        requireApproval: [create_pull_request, push_files]
+```
+
+## The three choices
+
+When the model calls a gated tool, the reply stream pauses and an approval card appears in the conversation:
+
+<CardGroup cols={2}>
+  <Card title="Allow" icon="check">
+    Runs this one call. The tool executes as it would without the gate: a Backstage action runs as the calling user; an MCP tool runs under its server's configured credential or the user's own token for a per-user server.
+  </Card>
+  <Card title="Always allow" icon="check-double">
+    Runs this call and skips the prompt for that tool for the rest of the conversation. The grant lives in the persisted message history and survives page reloads. Not available for per-user MCP server tools unless the server sets `allowStandingApproval: true`.
+  </Card>
+  <Card title="Deny" icon="xmark">
+    Cancels the call. The model receives an `execution-denied` result and can explain the situation or propose an alternative. The conversation continues normally.
+  </Card>
+</CardGroup>
+
+Several gated calls of the same tool in a single model step collapse into one approval card with a count.
+
+## How the gate is enforced
+
+<Tabs>
+  <Tab title="MCP and Backstage tools">
+    Each tool in the effective approval set is added to the AI SDK's `toolApproval` map. The SDK emits a `tool-approval-request` event and skips `execute` until the user answers. The pause is deterministic in the loop — the model does not continue, and no prompt is needed to achieve this.
+  </Tab>
+  <Tab title="Client tools">
+    The browser runtime pauses before `execute` using assistant-ui's `human` interrupt. Additionally, **any client tool that is not read-only, or is destructive, is gated whether or not it appears in the approval floor**. There is no "always allow" for client tools — every gated call asks.
+  </Tab>
+</Tabs>
+
+## Always allow and per-user servers
+
+"Always allow" grants a server tool for the rest of the conversation. The grant is stored in the persisted message history, so it survives navigation and page reloads within the same conversation.
+
+For per-user MCP servers, standing approval is off by default (`allowStandingApproval: false`). Every gated call is approved individually. To offer "Always allow" on a per-user server, set `allowStandingApproval: true` on that server:
+
+```yaml
+assistants:
+  mcp:
+    servers:
+      github:
+        transport: http
+        url: https://api.githubcopilot.com/mcp/
+        userCredentials:
+          provider: github
+          host: github.com
+        requireApproval: [create_pull_request, push_files]
+        allowStandingApproval: true # offer "Always allow" for this server's tools
+```
+
+## Write previews
+
+When an MCP tool has `approvalPreview` configured, the approval card renders more than just the raw tool input. It shows:
+
+- The **target** — for example, `owner/repo · branch · path`
+- The **commit message**
+- A **unified diff** against the current file content
+
+The diff is fetched via `POST /preview`, which calls the configured read tool with the server's own credentials for the same user. A file the read tool reports as not found is shown as new. "Show raw input" is always available to see the raw JSON arguments.
+
+```yaml
+assistants:
+  mcp:
+    servers:
+      github:
+        approvalPreview:
+          create_or_update_file:
+            type: file
+            fields:
+              repo: '{owner}/{repo}'
+              branch: branch
+              path: path
+              content: content
+              message: message
+            base:
+              tool: get_file_contents
+              args: { owner: owner, repo: repo, path: path, ref: branch }
+```
+
+## Argument rules
+
+`argumentRules` on an MCP server enforce a `pattern` (regular expression) or `equals` check on a specific tool argument, before the approval prompt is shown. A call that breaks a rule is denied immediately with the reason — the user never approves a call that would be refused anyway.
+
+```yaml
+assistants:
+  mcp:
+    servers:
+      github:
+        argumentRules:
+          create_pull_request:
+            draft: { equals: true }
+```
+
+Rules are checked twice: once before the approval prompt (the check is automatic, so the user never sees an approvable card for a breaking call) and once before the call actually runs. A missing argument fails its rule.
+
+## What the approval gate is not
+
+<CardGroup cols={2}>
+  <Card title="Not authorization" icon="shield-halved">
+    The gate withholds execution pending consent. It never grants access. Backstage's per-user permissions still apply when an approved Backstage action invokes — it still runs as the calling user, with Backstage enforcing their permissions.
+  </Card>
+  <Card title="Not per-assistant" icon="sliders">
+    The gate is config-only. It applies globally across all assistants and cannot be changed from the in-app editor. Runtime assistant editing can never weaken it.
+  </Card>
+</CardGroup>
+
+## The `_error` tool result convention
+
+<Note>
+When a tool call fails — a denial, a timeout, a disconnected credential, or an execution error — the result returned to the model is `{ "_error": true, "code": "...", "message": "..." }` rather than throwing. This keeps the model loop running so the model can explain the failure or retry with corrected input. A Backstage action that fails with a validation error returns the HTTP status plus the reason from the response body, so the model can correct its input.
+</Note>

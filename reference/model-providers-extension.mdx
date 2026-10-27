@@ -1,0 +1,90 @@
+---
+title: "Add Custom Model Provider Types to Backstage Assistants"
+sidebarTitle: "Model Providers"
+description: "Use assistantsModelProvidersExtensionPoint to register custom provider types from a backend module, such as a company AI gateway or agent SDK."
+---
+
+The four built-in provider types — `openai`, `anthropic`, `azure`, and `openai-compatible` — cover most deployment scenarios. For a company AI gateway, an agent SDK, or a custom LLM backend that does not fit those shapes, a backend module can register additional types through `assistantsModelProvidersExtensionPoint`. Each `assistants.providers.<id>` block whose `type` matches the registered name is handed to the module's factory, and the module's models join the pool alongside any built-in providers.
+
+## Import
+
+Import `assistantsModelProvidersExtensionPoint` from the backend plugin package:
+
+```ts
+import { assistantsModelProvidersExtensionPoint } from '@drewswiredin/backstage-plugin-assistants-backend';
+```
+
+## Register a provider type
+
+Create a backend module targeting the `assistants` plugin. In `registerInit`, declare a dependency on `assistantsModelProvidersExtensionPoint` and call `addProviderType` with a type name and a factory function. The factory receives the provider's config block and returns an AI SDK language model factory:
+
+```ts
+import { createBackendModule } from '@backstage/backend-plugin-api';
+import { assistantsModelProvidersExtensionPoint } from '@drewswiredin/backstage-plugin-assistants-backend';
+import { createGateway } from './gateway';
+
+export default createBackendModule({
+  pluginId: 'assistants',
+  moduleId: 'gateway-provider',
+  register(env) {
+    env.registerInit({
+      deps: { providers: assistantsModelProvidersExtensionPoint },
+      async init({ providers }) {
+        providers.addProviderType('gateway', ({ config }) => {
+          const gateway = createGateway({ url: config.getString('url') });
+          return { languageModel: name => gateway.languageModel(name) };
+        });
+      },
+    });
+  },
+});
+```
+
+## Configure a provider block for the new type
+
+With the module loaded, add a provider block to `app-config.yaml` that uses the registered `type`. The `models` list is read the same way as for built-in providers — each entry is an object with a required `name` and optional `contextWindow`, `reasoning`, and `maxOutputTokens`:
+
+```yaml
+assistants:
+  providers:
+    corp:
+      type: gateway
+      url: https://ai.example.com
+      models:
+        - name: frontier-large
+# model id: corp:frontier-large
+```
+
+## Factory return shape
+
+The factory function returns an object with the following shape:
+
+```ts
+{
+  languageModel(name: string, turn?: Turn): LanguageModel;
+  reasoningOptions?(name: string, level: string): ProviderOptions;
+}
+```
+
+- **`languageModel(name)`** — returns an AI SDK `LanguageModel` for the given model name.
+- **`reasoningOptions(name, level)`** — optional. Supplies the `providerOptions` object for the effort tiers on models marked `reasoning: true`. Omit this function and no tier is forwarded to the provider; the provider's own default stands. Tiers are `low`, `medium`, `high`, and `max`.
+
+## Providers that run their own tool loop
+
+An agent SDK or CLI executes tools itself rather than returning tool calls for the plugin to dispatch. Such a provider sets `runsOwnToolLoop: true` on the factory return value and receives the turn's tools in `languageModel(name, turn)` as `turn.tools`. Each tool has a JSON Schema and an `execute` function that runs the tool exactly as the plugin would — as the signed-in user, behind the approval gate and argument rules. The provider reports each call and its result as provider-executed tool parts named as in `turn.tools`.
+
+The turn then behaves as follows while the provider runs its own loop:
+
+- **Gated calls** — the approval card appears in the conversation while the provider waits. Allow runs the tool, Deny returns an `execution-denied` result to the model, and Always allow covers that tool for the rest of the turn.
+- **Client tools** — the browser runs the tool and returns the result to the provider. `render_form` waits for the form. A tool that would normally ask first (a write, or one that needs Connect) is declined with a message the model sees.
+- **MCP server questions** — the server's elicitation question appears on the call as a form while the provider waits.
+
+A held call — one that needs the user's input — waits up to 10 minutes and is answered through `POST /held-calls/:id` from any backend replica. Pressing Stop ends the wait.
+
+<Note>
+  A built-in type (`openai`, `anthropic`, `azure`, `openai-compatible`) cannot be replaced by a module. Attempting to register a type with the same name as a built-in is an error. If a provider block references an unknown `type`, the backend exits at startup with a message listing every available type — built-in and contributed.
+</Note>
+
+<Warning>
+  Keep credentials out of the `options` passthrough bag. The `options` field is spread verbatim into the AI SDK factory and is not schema-validated; it may appear in logs or DevTools. Use the top-level `apiKey` field for secrets — it is marked secret and redacted everywhere in the backend.
+</Warning>

@@ -1,0 +1,139 @@
+---
+title: "Security Model of Backstage Assistants"
+sidebarTitle: "Security"
+description: "How Backstage Assistants handles credentials, prompt injection risks, data storage, and what leaves your cluster on every chat turn."
+---
+
+The security model of Backstage Assistants covers four concerns: what data leaves the cluster on each turn, how credentials are handled for each tool type, what is persisted in the plugin database, and how prompt injection is mitigated. Understanding each of these helps you operate the plugin with an appropriate level of trust toward the model provider and toward the model's outputs.
+
+<Warning>
+The approval gate defaults to empty. List every write-capable action and MCP tool in `requireApproval`. Without explicit entries, gated tools run without confirmation. See the [Approval Gate](/concepts/approval-gate) concept page for the full config reference.
+</Warning>
+
+## What leaves the cluster per turn
+
+On every chat turn the backend sends the configured model provider:
+
+- The **platform instructions** (fixed text about the conversation surface, formatting, and built-in tools)
+- The **assistant's system prompt**
+- The **full conversation history**, including attachments as base64 and all prior tool results
+- The **results of tools called in that turn**: catalog entities, TechDocs pages, MCP server results, client tool outputs
+
+The **caller's identity** — user entity ref, groups, credentials — is **never sent to the model provider**.
+
+Auto-title makes one extra model call on a conversation's first turn. The caller's identity is not sent for that call either.
+
+MCP servers receive only the tool arguments the model produces, plus the user's answers to their own elicitation questions, under the server's configured static credential or the user's own token for a per-user server.
+
+<Note>
+`toolResultMaxChars` (default `30000`) limits how much of a single tool result is included in the history sent to the model. Long results are truncated head-and-tail with an elision marker. Set it to `0` to disable truncation. This bound applies both before the model call and before the result is persisted.
+</Note>
+
+## Credentials in transit
+
+<CardGroup cols={2}>
+  <Card title="Backstage action tools" icon="user-shield">
+    Every Backstage action runs as the calling user. Backstage enforces this at `actions.invoke` — the user's credentials are passed through, and Backstage's per-resource permission checks apply at execution time.
+  </Card>
+  <Card title="Per-user MCP tokens" icon="key">
+    The user's token for a per-user MCP server travels in the `x-assistants-credentials` request header on each `/chat` request. It is never stored, logged, or written to a message.
+  </Card>
+  <Card title="OAuth MCP tokens" icon="lock">
+    For servers that run their own OAuth (`provider: oauth`), the backend stores each user's access and refresh token AES-256-GCM encrypted in `mcp_oauth_tokens`, keyed by `mcp.oauth.encryptionKey`. Tokens are refreshed during the user's own turns and deleted on Disconnect. They never reach the browser.
+  </Card>
+  <Card title="Shared MCP credentials" icon="server">
+    Shared MCP server credentials live only in config (`headers`, `env` values). They are never stored in the database. One shared identity serves every user who calls that server.
+  </Card>
+</CardGroup>
+
+## Secret redaction
+
+The following values are treated as secrets and are redacted from logs, API responses, and the Backstage DevTools config view:
+
+- `providers.*.apiKey`
+- Every value under `mcp.servers.*.env`
+- Every value under `mcp.servers.*.headers`
+
+The browser receives from `GET /status` only: assistant titles and descriptions, the model pool and defaults, the resolved tool list (name and description only), the approval floor tool names, and the `ui` config. **Prompts and access policies are never sent to the chat surface.**
+
+## What is stored
+
+The plugin database contains these durable tables:
+
+| Table | Contains | Lifetime |
+|---|---|---|
+| `assistants` | `definition_json`: title, description, prompt, access policy, `allowedTools`, models | Until deleted by an admin |
+| `assistants_meta` | Seed-once marker; the default assistant id | Durable |
+| `threads` | One row per conversation: title, model, token count, turn state | Until the user hard-deletes |
+| `messages` | All user text, attachments, assistant output, tool results (truncated at `toolResultMaxChars`) | Until the user hard-deletes the conversation |
+| `stream_chunks` | The running reply's UI message stream, 250 ms batches | Deleted 60 s after the turn completes |
+| `mcp_tool_cache` | Each per-user MCP server's tool list | Replaced by each changed listing |
+| `mcp_oauth_tokens` | AES-256-GCM encrypted access and refresh tokens for OAuth MCP servers | Until Disconnect or server refuses refresh |
+| `mcp_oauth_clients` | AES-256-GCM encrypted OAuth client registration (client id, secret) | Until the server rejects the client |
+| `mcp_oauth_state` | AES-256-GCM encrypted PKCE verifier for a sign-in in progress | Deleted after callback; swept after 10 min |
+| `mcp_elicitations` | An MCP server's open question; the user's answer until the replica picks it up, then the action only | Swept after expiry |
+
+Deleting a conversation is a **hard delete**: `threads`, `messages`, and `stream_chunks` rows are removed and nothing is retained. Deleting an assistant leaves its users' conversations in the database but they no longer appear in the UI.
+
+Provider API keys and MCP secrets live only in config — never in the database.
+
+## Prompt injection
+
+Untrusted content enters the conversation through tool results: TechDocs pages, catalog entity fields, MCP server results, client tool outputs, and pages read by `read_current_page`. Any of these could carry instructions the model may follow.
+
+The **approval gate is the enforced checkpoint** against prompt-injected tool calls. A tool in `requireApproval` never runs without an explicit Allow from the user in the conversation, whatever the model was told. The gate is deterministic in code — it is not a prompt asking the model to check.
+
+Residual risks and mitigations:
+
+<Accordion title="Backstage action tools">
+  Even if injection causes the model to call a Backstage action, Backstage's per-user permissions still apply at `actions.invoke`. The call runs as the calling user, so it is bounded by what that user is allowed to do.
+</Accordion>
+
+<Accordion title="Shared MCP server tools">
+  A shared MCP server runs under a static configured credential. A low-privilege user chatting with an assistant that has access to a powerful shared server gets the server's full configured access. Choose shared server credentials deliberately, and use `requireApproval` for every write-capable tool.
+</Accordion>
+
+<Accordion title="Per-user MCP server tools">
+  A per-user MCP server carries the user's own token on every call, so the remote system limits what the model can do to what the user is allowed to do. `argumentRules` add an additional server-side check on tool arguments that holds regardless of what the model was told.
+</Accordion>
+
+<Accordion title="Client tools">
+  Client tools run in the user's browser with the user's own credentials. They can only do what the user can already do. A tool that is not read-only or is destructive requires approval on every call.
+</Accordion>
+
+## Client tool security
+
+The browser declares its available tools on each `/chat` request. The backend only offers tools that appear in the assistant's `allowedTools` allowlist — a forged or inflated declaration in the request can only make the model call code that runs in that user's own browser with their own credentials. The backend also rejects declarations whose name is not `<namespace>__<tool>`, whose name collides with a server tool, whose description exceeds 4000 characters, or whose schema exceeds 8 KB, and it caps contributed client tools at 30 per request (built-ins included).
+
+## What the browser receives
+
+`GET /status` returns a browser-safe projection:
+
+| Included | Not included |
+|---|---|
+| Assistant titles and descriptions | System prompts |
+| Model pool and defaults | Access policies |
+| Resolved tool list (name and description) | Provider API keys |
+| Approval floor tool names | MCP server headers and env values |
+| `ui` config (placeholder, suggestions, color) | Full assistant `definition_json` |
+
+Full definitions — including prompts and access policies — are only returned by the `/manage/assistants` endpoints, which require the `assistant.manage` permission.
+
+## Authorization layers
+
+The plugin enforces four independent authorization layers on every turn:
+
+<Steps>
+  <Step title="assistant.use permission">
+    Every user-facing route requires the `assistant.use` Backstage permission. Denied callers receive 403 and never load the surface.
+  </Step>
+  <Step title="Per-assistant access policy">
+    Each assistant has an `allowAuthenticated`, `users[]`, or `groups[]` access policy stored in the database. Deny by default. This filters which assistants a user can see and use.
+  </Step>
+  <Step title="Tool selection (two gates)">
+    For Backstage action tools: the assistant's `allowedTools` intersected with `actions.list(credentials)`, with per-resource checks at `invoke`. For MCP tools: added directly, run as the server credential or the user's token. For client tools: `allowedTools` intersected with the browser's declarations.
+  </Step>
+  <Step title="Approval gate">
+    Tools in `requireApproval` are paused for an explicit Allow or Deny before execution. A human checkpoint enforced in code. Orthogonal to permissions — it withholds execution pending consent; it never grants access.
+  </Step>
+</Steps>
