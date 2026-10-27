@@ -1,5 +1,5 @@
 ---
-title: "Connect MCP Servers to Backstage Assistants"
+title: "Connect MCP Servers to Backstage Assistants Plugin"
 sidebarTitle: "MCP Servers"
 description: "Give assistants tools from external MCP servers — GitHub, Atlassian, Azure DevOps, or any MCP-compatible service — via HTTP, SSE, or stdio transports."
 ---
@@ -69,16 +69,18 @@ A server with `userCredentials` has no shared credential. Each turn calls the se
 assistants:
   mcp:
     servers:
-      github-user:
+      github:
         transport: http
         url: https://api.githubcopilot.com/mcp/
         userCredentials:
-          provider: github  # matches a Backstage auth provider id
-          header: Authorization
-          scheme: Bearer
+          provider: github      # a Backstage auth provider id
+          host: github.com      # use SCM auth for this integration's host
+          # scopes: [repo]      # OAuth scopes; the provider's defaults otherwise
+          # header: Authorization  # http/sse header (default)
+          # scheme: Bearer         # prefix before the token (default)
 ```
 
-`provider` must match a Backstage auth provider configured in `auth.providers`. The `header` and `scheme` fields control how the token is forwarded to the server; both default to `Authorization` and `Bearer`.
+`provider` must match a Backstage auth provider configured in `auth.providers`. When `host` is set, the token comes from SCM auth for that integration's host (GitHub Enterprise and self-hosted GitLab work the same way); without `host`, the token comes from the provider's own auth API. The `header` and `scheme` fields control how the token is forwarded to the server; both default to `Authorization` and `Bearer`.
 
 What users see: a **Connect GitHub** chip appears next to the model picker until the user has signed in through that provider. Until they connect, the server's tools are not offered to the model, and the model is told to ask the user to connect.
 

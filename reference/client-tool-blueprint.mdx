@@ -6,35 +6,66 @@ description: "The AssistantClientToolBlueprint extension lets any Backstage fron
 
 `AssistantClientToolBlueprint` is the extension point for contributing client tools to Backstage Assistants. Any frontend plugin or module can register a browser-side tool without modifying the assistants plugin itself. The browser declares the tool's name, description, JSON Schema, and attributes on every `/chat` request; the backend offers it to the model; and when the model calls it, the browser runs the tool's `execute` function with the signed-in user's own credentials. The credential never leaves the browser, and client tools are never exposed over MCP.
 
+## Import
+
+Import `AssistantClientToolBlueprint` from the package root (not `/alpha`):
+
+```ts
+import { AssistantClientToolBlueprint } from '@drewswiredin/backstage-plugin-assistants';
+```
+
 ## Registration
 
-Create a `createFrontendModule` that contains one or more `AssistantClientToolBlueprint.make()` extensions. The following example shows a complete tool that fetches a resource from an internal API using a Microsoft OAuth token:
+Create a `createFrontendModule` that contains one or more `AssistantClientToolBlueprint.make()` extensions. The `name` passed to `.make()` is the extension's own identifier (kebab-case); the tool's actual name (`<namespace>__<tool>`) goes inside `params`. The following example shows a complete tool that fetches recent builds from Azure DevOps using a Microsoft OAuth token:
 
 ```ts
 import { createFrontendModule } from '@backstage/frontend-plugin-api';
 import { microsoftAuthApiRef } from '@backstage/core-plugin-api';
 import { AssistantClientToolBlueprint } from '@drewswiredin/backstage-plugin-assistants';
 
-export default createFrontendModule({
-  pluginId: 'my-plugin',
-  extensions: [
-    AssistantClientToolBlueprint.make({
-      name: 'my-plugin__get_resource',
-      params: {
-        description: 'Fetch a resource from the internal API',
-        schema: {
-          resourceId: z.string().describe('The resource ID to look up'),
+const recentBuilds = AssistantClientToolBlueprint.make({
+  name: 'recent-builds',
+  params: defineParams =>
+    defineParams<{ project: string; top?: number }, { builds: unknown[] }>({
+      name: 'azure-devops__get_recent_builds',
+      title: 'Recent builds',
+      description: 'The latest Azure DevOps builds of a project.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          project: { type: 'string' },
+          top: { type: 'number', description: 'How many; default 10.' },
         },
-        attributes: { readOnly: true },
-        auth: { microsoftAuth: microsoftAuthApiRef },
-        async execute({ resourceId }, { auth }) {
-          const token = await auth.microsoftAuth.getAccessToken(['user.read']);
-          // ... call the API ...
-          return { name: 'My Resource', status: 'active' };
-        },
+        required: ['project'],
+      },
+      attributes: { readOnly: true },
+      auth: {
+        kind: 'oauth',
+        system: 'Azure DevOps',
+        apiRef: microsoftAuthApiRef,
+        scopes: ['499b84ac-1321-427f-aa17-267ca6975798/user_impersonation'],
+      },
+      execute: async ({ project, top = 10 }, { credential, signal }) => {
+        const res = await fetch(
+          `https://dev.azure.com/my-org/${project}/_apis/build/builds?$top=${top}&api-version=7.1`,
+          { headers: { Authorization: `Bearer ${credential}` }, signal },
+        );
+        if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+        const { value } = await res.json();
+        return {
+          builds: value.map((b: any) => ({
+            id: b.id,
+            status: b.status,
+            result: b.result,
+          })),
+        };
       },
     }),
-  ],
+});
+
+export const assistantToolsModule = createFrontendModule({
+  pluginId: 'assistants',
+  extensions: [recentBuilds],
 });
 ```
 
@@ -43,14 +74,18 @@ Add the module to the app's `features` array, then give an assistant the tool by
 ## Blueprint fields
 
 <ParamField path="name" type="string" required>
-  The tool's namespaced identifier in the form `<namespace>__<tool>` (two underscores), for example `my-plugin__get_resource`. The namespace keeps a plugin's tools distinct from Backstage actions and MCP server tools.
+  The tool's namespaced identifier in the form `<namespace>__<tool>` (two underscores), for example `azure-devops__get_recent_builds`. The namespace keeps a plugin's tools distinct from Backstage actions and MCP server tools.
+</ParamField>
+
+<ParamField path="title" type="string">
+  Shown instead of the tool name in approval and connect prompts. Optional.
 </ParamField>
 
 <ParamField path="description" type="string" required>
   What the tool does, shown to the model. At most 4,000 characters.
 </ParamField>
 
-<ParamField path="schema" type="object" required>
+<ParamField path="inputSchema" type="object" required>
   A JSON Schema object (`type: object`) describing the tool's input parameters. At most 8 KB serialized.
 </ParamField>
 
@@ -63,11 +98,19 @@ Add the module to the app's `features` array, then give an assistant the tool by
 </ParamField>
 
 <ParamField path="auth" type="object">
-  A map of auth API refs the tool needs. At runtime the Backstage OAuth API is resolved and its credential is passed to `execute` through the `auth` context. The runtime acquires the credential silently first; if that yields nothing it shows a **Connect** control in the conversation and acquires on the click, so no popup is opened outside a user gesture.
+  The credential the tool needs, as a `ClientToolAuthRequirement`. Use `{ kind: 'oauth', system, apiRef, scopes }` to name a Backstage OAuth API ref and request scopes; use `{ kind: 'custom', system, acquire }` for a plugin that manages its own credentials. The runtime acquires the credential silently first; when that yields nothing it shows a **Connect** control in the conversation and acquires on the click, so no popup is opened outside a user gesture. The credential reaches only `execute`.
 </ParamField>
 
-<ParamField path="execute" type="function" required>
-  An async function that receives the parsed input parameters and a `ClientToolContext` object (`{ apis, credential, signal }`). Its return value must be JSON-serializable and becomes the tool result sent back to the model. A thrown error, a timeout (default 30 s, at most 120 s), a declined approval, or a dismissed Connect control each become an error result the model explains.
+<ParamField path="isAvailable" type="function">
+  `({ apis }) => boolean | Promise<boolean>` — return `false` to hide the tool from the model entirely when the plugin it depends on is not installed or configured. Resolved once per page load.
+</ParamField>
+
+<ParamField path="execute" type="function">
+  An async function `(input, { apis, credential, signal }) => Promise<TOutput>`. Its return value must be JSON-serializable and becomes the tool result sent back to the model. A thrown error, a timeout (`timeoutMs`, default 30 s, at most 120 s), a declined approval, or a dismissed Connect control each become an error result the model explains.
+</ParamField>
+
+<ParamField path="timeoutMs" type="number">
+  Time budget for `execute` in milliseconds. Default 30,000 (30 s); at most 120,000 (120 s).
 </ParamField>
 
 <ParamField path="render" type="ComponentType">

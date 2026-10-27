@@ -1,7 +1,7 @@
 ---
-title: "Install the Assistants Backend Plugin"
+title: "Install and Configure the Backstage Assistants Backend"
 sidebarTitle: "Installation"
-description: "Add @drewswiredin/backstage-plugin-assistants-backend to your Backstage backend, configure a model provider, and enable the built-in catalog and TechDocs tools."
+description: "Add the assistants backend to your Backstage project, configure a model provider, and enable the built-in catalog and TechDocs read tools."
 ---
 
 The backend plugin is the server-side half of Backstage Assistants. It serves assistant metadata to the frontend, streams model replies turn by turn, and runs Backstage actions as tools using the calling user's own credentials. MCP server tools run under a configured static credential or, for per-user servers, under each user's own token. Assistant definitions — prompts, access policies, tool allowlists, and model selections — live in the plugin database and are managed through the in-app editor. `app-config.yaml` holds providers, MCP servers, the approval gate, and runtime limits.
@@ -90,7 +90,7 @@ Tables are created by migrations that run automatically at startup. There is not
 
 On a successful start, the log emits:
 
-```
+```text
 AI Assistants backend plugin initialized
 ```
 

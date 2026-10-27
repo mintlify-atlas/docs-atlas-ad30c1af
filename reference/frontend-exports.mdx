@@ -1,5 +1,5 @@
 ---
-title: "Frontend Package Exports for Backstage Assistants"
+title: "Backstage Assistants Frontend Plugin Exports Reference"
 sidebarTitle: "Frontend Exports"
 description: "All public exports from @drewswiredin/backstage-plugin-assistants: entry points, plugin modules, API refs, components, permissions, and types."
 ---
@@ -68,8 +68,6 @@ Import these from the bare package name `@drewswiredin/backstage-plugin-assistan
 | `clientToolDataRef` | `DataRef` | The data reference used by the extension system to pass client tool definitions between extensions. |
 | `clientToolsApiRef` | `ApiRef<ClientToolsApi>` | Registry of all contributed client tools. Read by every conversation surface at runtime. |
 | `usePanelControl` | Hook | Open the panel programmatically from any page component. Returns `undefined` in an app without `assistantsPanelModule`. |
-| `assistantUsePermission` | Permission | Re-exported from `-common`; use with `usePermission` to gate UI elements behind `assistant.use`. |
-| `assistantManagePermission` | Permission | Re-exported from `-common`; use with `usePermission` to gate admin UI behind `assistant.manage`. |
 
 ---
 
@@ -96,7 +94,7 @@ The following types are exported for TypeScript consumers. Import them from the 
 
 ## Permissions
 
-Both permissions are defined in `@drewswiredin/backstage-plugin-assistants-common` and re-exported from the root entry point for convenience.
+Both permissions are defined in `@drewswiredin/backstage-plugin-assistants-common`. Import them directly from that package.
 
 <Accordion title="assistantUsePermission — assistant.use">
 

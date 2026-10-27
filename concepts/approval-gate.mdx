@@ -1,7 +1,7 @@
 ---
 title: "The Approval Gate: Human-in-the-Loop for Tool Calls"
 sidebarTitle: "Approval Gate"
-description: "The approval gate pauses the model loop and asks the user to Allow, Always allow, or Deny a tool call before it executes. It is enforced in code, not in a model prompt."
+description: "The approval gate pauses the model loop and asks for Allow, Always allow, or Deny before a tool executes. Enforced in code, not in a model prompt."
 ---
 
 The approval gate is a config-controlled human checkpoint — not a permission system. It withholds execution of a tool call pending explicit user consent. When a tool is in the approval floor, the model loop stops at that call and presents an approval card in the conversation. Nothing in the system prompt asks the model to check with the user; the pause is enforced deterministically in code.
@@ -39,7 +39,7 @@ When the model calls a gated tool, the reply stream pauses and an approval card 
     Runs this one call. The tool executes as it would without the gate: a Backstage action runs as the calling user; an MCP tool runs under its server's configured credential or the user's own token for a per-user server.
   </Card>
   <Card title="Always allow" icon="check-double">
-    Runs this call and skips the prompt for that tool for the rest of the conversation. The grant lives in the persisted message history and survives page reloads. Not available for per-user MCP server tools unless the server sets `allowStandingApproval: true`.
+    Runs this call and skips the prompt for that tool for the rest of the conversation. The grant lives in the persisted message history and survives page reloads. Not available for client tools (every gated client tool call always asks) or for per-user MCP server tools unless the server sets `allowStandingApproval: true`.
   </Card>
   <Card title="Deny" icon="xmark">
     Cancels the call. The model receives an `execution-denied` result and can explain the situation or propose an alternative. The conversation continues normally.

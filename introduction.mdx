@@ -1,7 +1,7 @@
 ---
 title: "Backstage Assistants: AI for Your Developer Portal"
 sidebarTitle: "Introduction"
-description: "Backstage Assistants embeds AI chat in your developer portal, grounding every answer in your catalog and TechDocs and running every action as the signed-in user."
+description: "AI chat for Backstage: every answer comes from your catalog and TechDocs, and every Backstage action runs as the signed-in user with their own permissions."
 ---
 
 Backstage Assistants is a set of plugins that bring AI chat directly into your Backstage developer portal. Every answer is grounded in your catalog and TechDocs — not the model's memory — and every Backstage action an assistant takes runs with the permissions of the signed-in user. People can ask questions on a full chat page at `/assistants`, in a collapsible side panel that opens beside any page in your app, or from a composer on the home page. Assistants can read the page the user is currently looking at, call external MCP servers under a configured or per-user credential, run scaffolder templates end-to-end inside the conversation, and render generative UI including inline forms with your own scaffolder field extensions and Mermaid architecture diagrams. Platform admins create and manage assistants entirely in-app through a built-in editor — no `app-config.yaml` edits required for per-assistant settings.
@@ -42,7 +42,7 @@ All four packages are published to npm under the `@drewswiredin` scope. The `-co
 
 ## Requirements
 
-- **Backstage 1.56 or later**, on the new frontend system and the new backend system (`@backstage/backend-defaults`).
+- **Backstage 1.56 or later**, on the new frontend system (`@backstage/frontend-defaults` `createApp`) and the new backend system (`@backstage/backend-defaults`).
 - **Node 22.12 or later.**
 - **React 18** and `react-router-dom` ^6.30.2 in the app.
 - **A plugin database:** SQLite, Postgres, or MySQL.
